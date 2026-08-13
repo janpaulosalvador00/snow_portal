@@ -21,8 +21,8 @@ CREATE TABLE IF NOT EXISTS connections (
     name                VARCHAR(200) NOT NULL,
     account_identifier  VARCHAR(200) NOT NULL,
     username            VARCHAR(200) NOT NULL,
-    auth_method         VARCHAR(32) NOT NULL DEFAULT 'pat'
-                        CHECK (auth_method IN ('local_oauth', 'sso', 'password', 'pat')),
+    auth_method         VARCHAR(32) NOT NULL DEFAULT 'oauth'
+                        CHECK (auth_method IN ('local_oauth', 'sso', 'password', 'pat', 'oauth')),
     authenticator_url   VARCHAR(500),
     pat_encrypted       TEXT,
     warehouse           VARCHAR(200),

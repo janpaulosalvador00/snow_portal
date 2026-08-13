@@ -23,4 +23,9 @@ def get_settings() -> dict:
         "admin_username": os.getenv("ADMIN_USERNAME", "admin"),
         "admin_password": os.getenv("ADMIN_PASSWORD", "admin123"),
         "session_timeout_hours": int(os.getenv("SESSION_TIMEOUT_HOURS", "12")),
+        "oauth_redirect_uri": os.getenv(
+            "OAUTH_REDIRECT_URI",
+            "http://127.0.0.1:8000/api/oauth/callback",
+        ),
+        "portal_public_url": os.getenv("PORTAL_PUBLIC_URL", "http://localhost:8501"),
     }

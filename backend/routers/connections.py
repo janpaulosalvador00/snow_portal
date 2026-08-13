@@ -16,21 +16,22 @@ from backend.security import get_current_user
 router = APIRouter(tags=["connections"])
 
 
-def _oauth_result_page(*, title: str, body: str, redirect_url: str, delay_ms: int = 800) -> HTMLResponse:
+def _oauth_result_page(*, title: str, body: str, redirect_url: str, delay_ms: int = 1200) -> HTMLResponse:
     safe_title = title.replace("<", "")
     safe_body = body.replace("<", "")
+    redirect_js = json.dumps(redirect_url)
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR"><head>
 <meta charset="utf-8"/>
 <title>{safe_title}</title>
-<meta http-equiv="refresh" content="{max(delay_ms/1000, 0.3)};url={redirect_url}">
+<meta http-equiv="refresh" content="{max(delay_ms/1000, 0.5)};url={redirect_url}">
 <style>
 body{{font-family:system-ui,sans-serif;background:#0f1419;color:#e7ecf3;display:flex;
 align-items:center;justify-content:center;min-height:100vh;margin:0}}
-.card{{max-width:420px;padding:1.5rem 1.75rem;border:1px solid #2a3544;border-radius:12px;
+.card{{max-width:440px;padding:1.5rem 1.75rem;border:1px solid #2a3544;border-radius:12px;
 background:#151b24}}
 h1{{font-size:1.1rem;margin:0 0 .5rem}}
-p{{margin:0;color:#9aa8bc;line-height:1.45}}
+p{{margin:0;color:#9aa8bc;line-height:1.45;word-break:break-word}}
 .spinner{{width:1.1rem;height:1.1rem;border:2px solid #2a3544;border-top-color:#5b9fff;
 border-radius:50%;display:inline-block;animation:spin .8s linear infinite;margin-right:.5rem;
 vertical-align:-.2rem}}
@@ -40,9 +41,10 @@ a{{color:#5b9fff}}
 <body><div class="card">
 <h1><span class="spinner"></span>{safe_title}</h1>
 <p>{safe_body}</p>
-<p style="margin-top:1rem;font-size:.85rem">Se não redirecionar, <a href="{redirect_url}">clique aqui</a>.</p>
+<p style="margin-top:1rem;font-size:.85rem">Aguarde o retorno ao portal…
+Se não redirecionar, <a href="{redirect_url}">clique aqui</a>.</p>
 </div>
-<script>setTimeout(function(){{location.replace({json.dumps(redirect_url)})}}, {int(delay_ms)});</script>
+<script>setTimeout(function(){{location.replace({redirect_js})}}, {int(delay_ms)});</script>
 </body></html>"""
     return HTMLResponse(html)
 

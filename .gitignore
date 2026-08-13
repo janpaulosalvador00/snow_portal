@@ -11,3 +11,6 @@ __pycache__/
 data/
 .idea/
 .vscode/
+node_modules/
+frontend/dist/
+frontend/node_modules/

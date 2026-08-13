@@ -6,7 +6,7 @@ import hashlib
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from app.lib.config import get_settings
+from backend.lib.config import get_settings
 
 
 def _fernet() -> Fernet:

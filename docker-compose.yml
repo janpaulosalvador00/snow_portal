@@ -16,10 +16,10 @@ services:
       timeout: 5s
       retries: 10
 
-  portal:
-    build: .
-    ports:
-      - "${STREAMLIT_SERVER_PORT:-8501}:8501"
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     env_file:
       - .env
     environment:
@@ -28,9 +28,19 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./app:/app/app
-      - ./.streamlit:/app/.streamlit
+      - ./backend:/app/backend
       - snowflake_cache:/root/.cache/snowflake
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${STREAMLIT_SERVER_PORT:-8501}:80"
+    depends_on:
+      - api
 
 volumes:
   postgres_data:

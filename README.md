@@ -37,3 +37,7 @@ cd frontend && npm install && npm run dev   # :5173 com proxy /api
 - JWT Bearer no header
 - PAT/senha criptografados em Postgres
 - `.env` fora do git
+
+## Erro 390190 (Local OAuth / SAML)
+
+Use **PAT**, não Local OAuth. Guia: [`docs/CONECTAR_PAT.md`](docs/CONECTAR_PAT.md).

@@ -1,10 +1,20 @@
 # Conectar conta PONCETECH (erro 390190)
 
-## Por que falhou
+## Por que o Cortex autentica e o portal não
 
-**Local OAuth / SSO** usam `externalbrowser` (SAML). A conta `A8614549778771-PONCETECH_PARTNER` rejeitou com **390190** — SAML2 não configurado (ou legado).
+No **Cortex Code Desktop**, **Local OAuth** usa `oauth_authorization_code` (app local `SNOWFLAKE$LOCAL_APPLICATION`): o browser abre no Mac e o callback volta para o processo desktop.
 
-**Não use Local OAuth nesta conta.** Use **PAT** ou **Password**.
+Neste **portal web**, a API Python roda no **Docker**. Mesmo com o mapeamento correto (`local_oauth` → `oauth_authorization_code`), o callback OAuth (`127.0.0.1` no container) não chega ao browser do seu Mac — Local OAuth de desktop **não se aplica** da mesma forma.
+
+Além disso, versões antigas do portal mapeavam Local OAuth para `externalbrowser` (SAML). Contas sem SAML2 (ex.: `A8614549778771-PONCETECH_PARTNER`) respondiam **390190**.
+
+| Label Cortex | Authenticator | Neste portal (Docker) |
+| --- | --- | --- |
+| Local OAuth | `oauth_authorization_code` | Frágil / desktop-only — use PAT |
+| External Browser (SSO) | `externalbrowser` | Só com SAML2 + IdP |
+| Password / PAT | password | **Recomendado** |
+
+**Método suportado e estável no portal:** **PAT** (ou Password).
 
 ## Passo a passo (PAT)
 

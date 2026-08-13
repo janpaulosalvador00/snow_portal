@@ -35,14 +35,18 @@ const METHODS_RECOMMENDED: MethodDef[] = [
 
 const METHODS_ADVANCED: MethodDef[] = [
   {
-    key: "sso",
-    label: "SSO",
-    desc: "SSO via browser ou URL do IdP. Só funciona com SAML2 security integration na conta.",
-  },
-  {
     key: "local_oauth",
     label: "Local OAuth",
-    desc: "Abre o browser (SAML/externalbrowser). Contas sem SAML2 falham com 390190 — use PAT.",
+    desc:
+      "Igual ao Cortex Desktop: oauth_authorization_code (SNOWFLAKE$LOCAL_APPLICATION). " +
+      "Neste portal a API roda no Docker — o callback OAuth não abre no seu Mac. Use PAT.",
+  },
+  {
+    key: "sso",
+    label: "External Browser (SSO)",
+    desc:
+      "Igual ao Cortex: authenticator=externalbrowser (SAML/IdP). " +
+      "Só funciona com SAML2 na conta; opcionalmente informe a URL do IdP.",
   },
 ];
 
@@ -52,12 +56,15 @@ const METHOD_LABELS: Record<string, string> = Object.fromEntries(
   ALL_METHODS.map((m) => [m.key, m.label]),
 );
 
-function isSamlRejectError(message: string): boolean {
+function shouldOfferPatSwitch(message: string): boolean {
   const lower = message.toLowerCase();
   return (
     lower.includes("390190") ||
     lower.includes("saml") ||
-    lower.includes("identity provider")
+    lower.includes("identity provider") ||
+    lower.includes("local oauth") ||
+    lower.includes("oauth_authorization_code") ||
+    lower.includes("docker")
   );
 }
 
@@ -159,7 +166,7 @@ export function ConnectionsPage() {
   }
 
   const methodMeta = ALL_METHODS.find((m) => m.key === method)!;
-  const showPatSwitch = Boolean(err && isSamlRejectError(err));
+  const showPatSwitch = Boolean(err && shouldOfferPatSwitch(err));
 
   return (
     <div>
@@ -245,22 +252,27 @@ export function ConnectionsPage() {
               <li>Copie account identifier e login name.</li>
             </ol>
             <p className="muted" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
-              Contas partner sem SAML2: use <strong>PAT</strong> (não Local OAuth). Guia:{" "}
-              <code>docs/CONECTAR_PAT.md</code>.
+              Labels alinhados ao Cortex Desktop. Guia PAT: <code>docs/CONECTAR_PAT.md</code>.
             </p>
+          </div>
+
+          <div className="warn-box">
+            <strong>Local OAuth no Cortex funciona no desktop.</strong> Neste portal a API
+            roda no <strong>Docker</strong> — use <strong>PAT</strong> (método estável para
+            suporte).
           </div>
 
           <label>
             Method
             <select value={method} onChange={(e) => setMethod(e.target.value)}>
-              <optgroup label="Recomendado">
+              <optgroup label="Recomendado (portal Docker)">
                 {METHODS_RECOMMENDED.map((m) => (
                   <option key={m.key} value={m.key}>
                     {m.label}
                   </option>
                 ))}
               </optgroup>
-              <optgroup label="Avançado (exige SAML2 na conta)">
+              <optgroup label="Avançado (labels Cortex)">
                 {METHODS_ADVANCED.map((m) => (
                   <option key={m.key} value={m.key}>
                     {m.label}
@@ -270,10 +282,16 @@ export function ConnectionsPage() {
             </select>
           </label>
           <div className="info-box">{methodMeta.desc}</div>
-          {(method === "local_oauth" || method === "sso") && (
+          {method === "local_oauth" && (
             <div className="warn-box">
-              <strong>Contas partner sem SAML2 → use PAT.</strong> Local OAuth / SSO abrem o
-              browser e falham com erro 390190 se a conta não tiver federated auth configurado.
+              Local OAuth aqui ≠ Cortex no Mac: o callback OAuth ocorre no container. Prefira{" "}
+              <strong>PAT</strong>.
+            </div>
+          )}
+          {method === "sso" && (
+            <div className="warn-box">
+              External Browser (SSO) exige SAML2 na conta. Sem IdP configurado → 390190. Use{" "}
+              <strong>PAT</strong>.
             </div>
           )}
 

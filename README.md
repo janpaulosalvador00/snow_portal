@@ -7,7 +7,7 @@ Portal local (Docker) — **React** + **FastAPI** + Postgres — para o time de 
 - Frontend: Vite + React + TypeScript (nginx)
 - API: FastAPI (JWT)
 - Postgres (usuários, times, conexões + ACL)
-- Auth Snowflake: Local OAuth, SSO, Password, PAT
+- Auth Snowflake: PAT (recomendado no Docker), Password, Local OAuth, External Browser (SSO) — labels alinhados ao Cortex
 
 ## Gate de login
 
@@ -38,6 +38,6 @@ cd frontend && npm install && npm run dev   # :5173 com proxy /api
 - PAT/senha criptografados em Postgres
 - `.env` fora do git
 
-## Erro 390190 (Local OAuth / SAML)
+## Por que o Cortex autentica e o portal não
 
-Use **PAT**, não Local OAuth. Guia: [`docs/CONECTAR_PAT.md`](docs/CONECTAR_PAT.md).
+No Cortex Desktop, **Local OAuth** = `oauth_authorization_code` no Mac. Aqui a API roda no Docker — use **PAT**. Guia: [`docs/CONECTAR_PAT.md`](docs/CONECTAR_PAT.md).

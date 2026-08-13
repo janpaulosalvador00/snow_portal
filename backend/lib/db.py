@@ -15,7 +15,7 @@ from backend.lib.snowflake_client import normalize_account_identifier
 AUTH_METHODS = ("local_oauth", "sso", "password", "pat")
 AUTH_METHOD_LABELS = {
     "local_oauth": "Local OAuth",
-    "sso": "SSO",
+    "sso": "External Browser (SSO)",
     "password": "Password",
     "pat": "Programmatic Access Token (PAT)",
 }

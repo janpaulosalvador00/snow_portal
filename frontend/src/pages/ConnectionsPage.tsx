@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, setActiveConnectionId, getActiveConnectionId } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
@@ -13,35 +13,64 @@ type Conn = {
 
 type Team = { id: number; name: string };
 
-const METHODS = [
+type MethodDef = {
+  key: string;
+  label: string;
+  desc: string;
+};
+
+/** Ordem operacional: PAT primeiro. */
+const METHODS_RECOMMENDED: MethodDef[] = [
   {
     key: "pat",
     label: "Programmatic Access Token (PAT)",
-    desc: "Token criptografado em repouso. Recomendado para suporte no Docker.",
+    desc: "Token criptografado em repouso. Recomendado para suporte e contas partner sem SAML2.",
   },
   {
     key: "password",
     label: "Password",
     desc: "Senha do usuário Snowflake, criptografada em repouso.",
   },
+];
+
+const METHODS_ADVANCED: MethodDef[] = [
   {
     key: "local_oauth",
     label: "Local OAuth",
-    desc: "Abre o browser (SAML). Se falhar com 390190, use PAT.",
+    desc:
+      "Igual ao Cortex Desktop: oauth_authorization_code (SNOWFLAKE$LOCAL_APPLICATION). " +
+      "Neste portal a API roda no Docker — o callback OAuth não abre no seu Mac. Use PAT.",
   },
   {
     key: "sso",
-    label: "SSO",
-    desc: "SSO via browser ou URL do IdP. Requer SAML2 na conta.",
+    label: "External Browser (SSO)",
+    desc:
+      "Igual ao Cortex: authenticator=externalbrowser (SAML/IdP). " +
+      "Só funciona com SAML2 na conta; opcionalmente informe a URL do IdP.",
   },
-] as const;
+];
+
+const ALL_METHODS = [...METHODS_RECOMMENDED, ...METHODS_ADVANCED];
 
 const METHOD_LABELS: Record<string, string> = Object.fromEntries(
-  METHODS.map((m) => [m.key, m.label]),
+  ALL_METHODS.map((m) => [m.key, m.label]),
 );
+
+function shouldOfferPatSwitch(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("390190") ||
+    lower.includes("saml") ||
+    lower.includes("identity provider") ||
+    lower.includes("local oauth") ||
+    lower.includes("oauth_authorization_code") ||
+    lower.includes("docker")
+  );
+}
 
 export function ConnectionsPage() {
   const { user } = useAuth();
+  const secretRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<"hub" | "signin">("hub");
   const [connections, setConnections] = useState<Conn[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -73,6 +102,13 @@ export function ConnectionsPage() {
       })
       .catch(() => setTeams([]));
   }, []);
+
+  function switchToPat() {
+    setMethod("pat");
+    setErr(null);
+    setMsg("Método alterado para PAT. Cole o token e teste novamente.");
+    window.setTimeout(() => secretRef.current?.focus(), 50);
+  }
 
   async function activate(id: number) {
     await api(`/api/connections/${id}/activate`, { method: "POST" });
@@ -129,7 +165,8 @@ export function ConnectionsPage() {
     }
   }
 
-  const methodMeta = METHODS.find((m) => m.key === method)!;
+  const methodMeta = ALL_METHODS.find((m) => m.key === method)!;
+  const showPatSwitch = Boolean(err && shouldOfferPatSwitch(err));
 
   return (
     <div>
@@ -156,7 +193,10 @@ export function ConnectionsPage() {
       {tab === "hub" ? (
         <div className="stack">
           {!connections.length ? (
-            <div className="info-box">Nenhuma conexão ainda. Use Sign in to Snowflake.</div>
+            <div className="info-box">
+              Nenhuma conexão ainda. Use Sign in to Snowflake com <strong>PAT</strong>{" "}
+              (recomendado). Ver também <code>docs/CONECTAR_PAT.md</code>.
+            </div>
           ) : (
             connections.map((c) => (
               <div key={c.id} className="row-card">
@@ -211,22 +251,47 @@ export function ConnectionsPage() {
               <li>Selecione Account → View account details.</li>
               <li>Copie account identifier e login name.</li>
             </ol>
+            <p className="muted" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+              Labels alinhados ao Cortex Desktop. Guia PAT: <code>docs/CONECTAR_PAT.md</code>.
+            </p>
+          </div>
+
+          <div className="warn-box">
+            <strong>Local OAuth no Cortex funciona no desktop.</strong> Neste portal a API
+            roda no <strong>Docker</strong> — use <strong>PAT</strong> (método estável para
+            suporte).
           </div>
 
           <label>
             Method
             <select value={method} onChange={(e) => setMethod(e.target.value)}>
-              {METHODS.map((m) => (
-                <option key={m.key} value={m.key}>
-                  {m.label}
-                </option>
-              ))}
+              <optgroup label="Recomendado (portal Docker)">
+                {METHODS_RECOMMENDED.map((m) => (
+                  <option key={m.key} value={m.key}>
+                    {m.label}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Avançado (labels Cortex)">
+                {METHODS_ADVANCED.map((m) => (
+                  <option key={m.key} value={m.key}>
+                    {m.label}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </label>
           <div className="info-box">{methodMeta.desc}</div>
-          {(method === "local_oauth" || method === "sso") && (
+          {method === "local_oauth" && (
             <div className="warn-box">
-              Local OAuth / SSO exigem SAML2. Se aparecer 390190, use PAT ou Password.
+              Local OAuth aqui ≠ Cortex no Mac: o callback OAuth ocorre no container. Prefira{" "}
+              <strong>PAT</strong>.
+            </div>
+          )}
+          {method === "sso" && (
+            <div className="warn-box">
+              External Browser (SSO) exige SAML2 na conta. Sem IdP configurado → 390190. Use{" "}
+              <strong>PAT</strong>.
             </div>
           )}
 
@@ -261,6 +326,7 @@ export function ConnectionsPage() {
             <label>
               {method === "pat" ? "Programmatic Access Token *" : "Password *"}
               <input
+                ref={secretRef}
                 type="password"
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
@@ -306,7 +372,18 @@ export function ConnectionsPage() {
             </select>
           </label>
 
-          {err ? <div className="error-box">{err}</div> : null}
+          {err ? (
+            <div className="error-box">
+              <div>{err}</div>
+              {showPatSwitch ? (
+                <div className="row-actions" style={{ marginTop: "0.75rem" }}>
+                  <button type="button" className="btn primary" onClick={switchToPat}>
+                    Trocar para PAT
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {msg ? <div className="success-box">{msg}</div> : null}
 
           <div className="row-actions">

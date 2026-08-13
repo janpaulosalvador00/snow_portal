@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from app.lib.snowflake_client import run_query
+from backend.lib.snowflake_client import run_query
 
 # Friendly labels for common SERVICE_TYPE values
 SERVICE_TYPE_LABELS = {

@@ -8,9 +8,9 @@ import bcrypt
 import psycopg2
 import psycopg2.extras
 
-from app.lib.config import get_settings
-from app.lib.crypto import decrypt_secret, encrypt_secret
-from app.lib.snowflake_client import normalize_account_identifier
+from backend.lib.config import get_settings
+from backend.lib.crypto import decrypt_secret, encrypt_secret
+from backend.lib.snowflake_client import normalize_account_identifier
 
 AUTH_METHODS = ("local_oauth", "sso", "password", "pat")
 AUTH_METHOD_LABELS = {

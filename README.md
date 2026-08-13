@@ -41,6 +41,6 @@ cd frontend && npm install && npm run dev   # :5173 com proxy /api
 
 ## Por que o Cortex autentica e o portal não
 
-Use **Browser OAuth (como Cortex)** no portal: abre o login Snowflake no browser (`SNOWFLAKE$LOCAL_APPLICATION`) e salva o token. Callback em `http://127.0.0.1:8000/api/oauth/callback`.
+Use **Browser OAuth (como Cortex)** no portal: abre o login Snowflake no browser (`SNOWFLAKE$LOCAL_APPLICATION`) e salva o token. Callback em `http://127.0.0.1:8000` (igual aos drivers).
 
 PAT continua disponível como alternativa. Guia: [`docs/CONECTAR_PAT.md`](docs/CONECTAR_PAT.md).

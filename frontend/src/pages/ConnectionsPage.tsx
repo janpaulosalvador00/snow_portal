@@ -90,7 +90,8 @@ export function ConnectionsPage() {
     if (oauth === "ok") {
       const id = Number(params.get("connection_id") || "");
       setTab("hub");
-      setMsg("Login Snowflake via browser concluído. Conexão salva.");
+      setBusy(false);
+      setMsg("Login Snowflake via browser concluído. Conexão salva e pronta para uso.");
       setErr(null);
       void reload().then(() => {
         if (id) {
@@ -101,7 +102,13 @@ export function ConnectionsPage() {
     } else if (oauth === "error") {
       setTab("signin");
       setMethod("browser_oauth");
-      setErr(params.get("detail") || "Falha no OAuth via browser.");
+      setBusy(false);
+      const detail = params.get("detail") || "Falha no OAuth via browser.";
+      try {
+        setErr(decodeURIComponent(detail));
+      } catch {
+        setErr(detail);
+      }
     }
     window.history.replaceState({}, "", "/conexoes");
   }, []);

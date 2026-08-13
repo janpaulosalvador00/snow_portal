@@ -31,17 +31,20 @@ def make_pkce() -> tuple[str, str]:
     return verifier, challenge
 
 
+def account_host(account: str) -> str:
+    """Hostname for Snowflake HTTPS endpoints (underscores → hyphens per Snowflake docs)."""
+    acct = normalize_account_identifier(account).lower().replace("_", "-")
+    return f"{acct}.snowflakecomputing.com"
+
+
 def account_base_url(account: str) -> str:
-    acct = normalize_account_identifier(account)
-    return f"https://{acct}.snowflakecomputing.com"
+    return f"https://{account_host(account)}"
 
 
 def oauth_redirect_uri() -> str:
     settings = get_settings()
-    return (
-        settings.get("oauth_redirect_uri")
-        or "http://127.0.0.1:8000/api/oauth/callback"
-    )
+    # LOCAL_APPLICATION expects http://127.0.0.1[:port] (empty path, like the drivers)
+    return (settings.get("oauth_redirect_uri") or "http://127.0.0.1:8000").rstrip("/")
 
 
 def portal_public_url() -> str:
@@ -70,8 +73,8 @@ def create_oauth_pending(
     state = secrets.token_urlsafe(24)
     redirect_uri = oauth_redirect_uri()
     acct = normalize_account_identifier(account)
-    scope_parts = ["refresh_token", "session:role-any"]
-    if role_name:
+    scope_parts = ["refresh_token"]
+    if role_name and role_name.strip():
         scope_parts.append(f"session:role:{role_name.strip()}")
     scope = " ".join(scope_parts)
     params = {

@@ -1,6 +1,7 @@
-"""Snowflake connector helpers (PAT, password, Local OAuth, External Browser SSO)."""
+"""Snowflake connector helpers (PAT, password, OAuth browser, SSO)."""
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from typing import Any, Generator
 
@@ -36,36 +37,29 @@ def friendly_connect_error(exc: BaseException, *, auth_method: str | None = None
 
     if "390190" in raw or "saml identity provider" in lower:
         return (
-            "Erro 390190 (SAML / External Browser). "
-            "No Cortex Desktop, Local OAuth usa oauth_authorization_code (não SAML). "
-            "Neste portal a API roda no Docker (servidor) — Local OAuth de desktop não se aplica "
-            "da mesma forma. Use Programmatic Access Token (PAT) ou Password. "
-            "External Browser (SSO) só funciona se a conta tiver SAML2; informe a URL do IdP se houver."
+            "Erro 390190 (SAML). Esta conta não tem External Browser/SSO configurado. "
+            "Use Conectar via browser (OAuth local, como o Cortex) ou PAT."
         )
 
-    if method == "local_oauth":
+    if method == "sso":
         return (
             f"{raw}\n\n"
-            "Local OAuth (oauth_authorization_code) no Cortex abre o browser no Mac e guarda "
-            "tokens no keychain. Aqui o connector roda dentro do container Docker — o callback "
-            "OAuth não chega ao seu browser. Use PAT (recomendado neste portal)."
+            "SSO/SAML exige IdP na conta. Prefira Conectar via browser (OAuth) ou PAT."
         )
 
-    if "390139" in raw or "authenticator_not_supported" in lower:
-        return (
-            "O authenticator informado não é aceito por esta conta Snowflake. "
-            "Tente PAT ou Password, ou confirme a URL SSO com o administrador."
-        )
+    return raw
 
-    if method == "sso" and (
-        "browser" in lower or "failed to open" in lower or "timeout" in lower
-    ):
-        return (
-            f"{raw}\n\n"
-            "External Browser (SSO) precisa abrir o navegador no host. "
-            "Se falhar, use PAT (recomendado para suporte no Docker)."
-        )
 
+def _oauth_access_token(password: str | None) -> str:
+    if not password:
+        raise ValueError("Token OAuth ausente. Refaça o login via browser.")
+    raw = password.strip()
+    if raw.startswith("{"):
+        data = json.loads(raw)
+        token = data.get("access_token")
+        if not token:
+            raise ValueError("Blob OAuth sem access_token. Refaça o login via browser.")
+        return token
     return raw
 
 
@@ -93,12 +87,11 @@ def _connect_kwargs(
         if not password:
             raise ValueError("Senha/PAT obrigatório para este método de autenticação.")
         kwargs["password"] = password
-    elif method == "local_oauth":
-        # Cortex Desktop Local OAuth = Snowflake OAuth for local apps (NOT externalbrowser/SAML)
-        kwargs["authenticator"] = "oauth_authorization_code"
-        kwargs["client_store_temporary_credential"] = True
+    elif method in ("oauth", "local_oauth"):
+        # Browser OAuth completed → use access token (same as Cortex local app tokens)
+        kwargs["authenticator"] = "oauth"
+        kwargs["token"] = _oauth_access_token(password)
     elif method == "sso":
-        # Cortex "External Browser (SSO)" = SAML / IdP
         auth = (authenticator_url or "").strip() or "externalbrowser"
         kwargs["authenticator"] = auth
         kwargs["client_store_temporary_credential"] = True

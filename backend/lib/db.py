@@ -12,9 +12,10 @@ from backend.lib.config import get_settings
 from backend.lib.crypto import decrypt_secret, encrypt_secret
 from backend.lib.snowflake_client import normalize_account_identifier
 
-AUTH_METHODS = ("local_oauth", "sso", "password", "pat")
+AUTH_METHODS = ("local_oauth", "sso", "password", "pat", "oauth")
 AUTH_METHOD_LABELS = {
-    "local_oauth": "Local OAuth",
+    "oauth": "Browser OAuth (Cortex)",
+    "local_oauth": "Browser OAuth (Cortex)",
     "sso": "External Browser (SSO)",
     "password": "Password",
     "pat": "Programmatic Access Token (PAT)",
@@ -68,6 +69,19 @@ def ensure_schema() -> None:
             """
             ALTER TABLE connections
             ALTER COLUMN pat_encrypted DROP NOT NULL
+            """
+        )
+        # Expand auth_method check to include oauth
+        cur.execute(
+            """
+            ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_auth_method_check
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE connections
+            ADD CONSTRAINT connections_auth_method_check
+            CHECK (auth_method IN ('local_oauth', 'sso', 'password', 'pat', 'oauth'))
             """
         )
 
@@ -199,8 +213,8 @@ def get_connection_credentials(connection_id: int) -> dict:
     if row.get("pat_encrypted"):
         secret = decrypt_secret(row["pat_encrypted"])
 
-    if method in ("pat", "password") and not secret:
-        raise ValueError("Conexão sem credencial armazenada. Recadastre com PAT ou senha.")
+    if method in ("pat", "password", "oauth", "local_oauth") and not secret:
+        raise ValueError("Conexão sem credencial armazenada. Refaça o login via browser ou PAT.")
 
     return {
         "account": row["account_identifier"],
@@ -240,15 +254,15 @@ def create_connection(
         raise ValueError(f"auth_method inválido: {auth_method}")
 
     secret_value = secret if secret is not None else pat
-    if auth_method in ("pat", "password"):
+    if auth_method in ("pat", "password", "oauth", "local_oauth"):
         if not secret_value:
-            raise ValueError("PAT/senha obrigatório para este método.")
+            raise ValueError("Credencial obrigatória para este método.")
         encrypted = encrypt_secret(secret_value)
     else:
         encrypted = None
 
     url = (authenticator_url or "").strip() or None
-    if url and not url.startswith("https://"):
+    if url and auth_method == "sso" and not url.startswith("https://"):
         raise ValueError("URL do IdP SSO deve começar com https://")
 
     with db_cursor(commit=True) as cur:

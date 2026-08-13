@@ -19,12 +19,19 @@ type MethodDef = {
   desc: string;
 };
 
-/** Ordem operacional: PAT primeiro. */
+/** Browser OAuth first (like Cortex); PAT/password as fallback. */
 const METHODS_RECOMMENDED: MethodDef[] = [
+  {
+    key: "browser_oauth",
+    label: "Browser OAuth (como Cortex)",
+    desc:
+      "Abre o login Snowflake no seu browser (OAuth local / SNOWFLAKE$LOCAL_APPLICATION). " +
+      "Não precisa de PAT. Mesma ideia do Local OAuth do Cortex Desktop.",
+  },
   {
     key: "pat",
     label: "Programmatic Access Token (PAT)",
-    desc: "Token criptografado em repouso. Recomendado para suporte e contas partner sem SAML2.",
+    desc: "Token criptografado em repouso. Alternativa se o OAuth via browser falhar.",
   },
   {
     key: "password",
@@ -33,40 +40,14 @@ const METHODS_RECOMMENDED: MethodDef[] = [
   },
 ];
 
-const METHODS_ADVANCED: MethodDef[] = [
-  {
-    key: "local_oauth",
-    label: "Local OAuth",
-    desc:
-      "Igual ao Cortex Desktop: oauth_authorization_code (SNOWFLAKE$LOCAL_APPLICATION). " +
-      "Neste portal a API roda no Docker — o callback OAuth não abre no seu Mac. Use PAT.",
-  },
-  {
-    key: "sso",
-    label: "External Browser (SSO)",
-    desc:
-      "Igual ao Cortex: authenticator=externalbrowser (SAML/IdP). " +
-      "Só funciona com SAML2 na conta; opcionalmente informe a URL do IdP.",
-  },
-];
+const ALL_METHODS = METHODS_RECOMMENDED;
 
-const ALL_METHODS = [...METHODS_RECOMMENDED, ...METHODS_ADVANCED];
-
-const METHOD_LABELS: Record<string, string> = Object.fromEntries(
-  ALL_METHODS.map((m) => [m.key, m.label]),
-);
-
-function shouldOfferPatSwitch(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("390190") ||
-    lower.includes("saml") ||
-    lower.includes("identity provider") ||
-    lower.includes("local oauth") ||
-    lower.includes("oauth_authorization_code") ||
-    lower.includes("docker")
-  );
-}
+const METHOD_LABELS: Record<string, string> = {
+  ...Object.fromEntries(ALL_METHODS.map((m) => [m.key, m.label])),
+  oauth: "Browser OAuth (como Cortex)",
+  local_oauth: "Browser OAuth (como Cortex)",
+  sso: "External Browser (SSO)",
+};
 
 export function ConnectionsPage() {
   const { user } = useAuth();
@@ -75,12 +56,11 @@ export function ConnectionsPage() {
   const [connections, setConnections] = useState<Conn[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [activeId, setActiveId] = useState<number | null>(getActiveConnectionId());
-  const [method, setMethod] = useState("pat");
+  const [method, setMethod] = useState("browser_oauth");
   const [account, setAccount] = useState("");
   const [name, setName] = useState("");
   const [sfUser, setSfUser] = useState("");
   const [secret, setSecret] = useState("");
-  const [authenticatorUrl, setAuthenticatorUrl] = useState("");
   const [warehouse, setWarehouse] = useState("");
   const [roleName, setRoleName] = useState("");
   const [teamId, setTeamId] = useState<number | "">("");
@@ -103,12 +83,28 @@ export function ConnectionsPage() {
       .catch(() => setTeams([]));
   }, []);
 
-  function switchToPat() {
-    setMethod("pat");
-    setErr(null);
-    setMsg("Método alterado para PAT. Cole o token e teste novamente.");
-    window.setTimeout(() => secretRef.current?.focus(), 50);
-  }
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauth = params.get("oauth");
+    if (!oauth) return;
+    if (oauth === "ok") {
+      const id = Number(params.get("connection_id") || "");
+      setTab("hub");
+      setMsg("Login Snowflake via browser concluído. Conexão salva.");
+      setErr(null);
+      void reload().then(() => {
+        if (id) {
+          setActiveConnectionId(id);
+          setActiveId(id);
+        }
+      });
+    } else if (oauth === "error") {
+      setTab("signin");
+      setMethod("browser_oauth");
+      setErr(params.get("detail") || "Falha no OAuth via browser.");
+    }
+    window.history.replaceState({}, "", "/conexoes");
+  }, []);
 
   async function activate(id: number) {
     await api(`/api/connections/${id}/activate`, { method: "POST" });
@@ -125,16 +121,58 @@ export function ConnectionsPage() {
     await reload();
   }
 
+  async function startBrowserOAuth() {
+    setErr(null);
+    setMsg(null);
+    if (!account.trim() || !sfUser.trim()) {
+      setErr("Preencha Account Identifier e Username antes do login via browser.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api<{ authorize_url: string }>("/api/connections/oauth/start", {
+        method: "POST",
+        body: JSON.stringify({
+          account_identifier: account.trim(),
+          username: sfUser.trim(),
+          name: name || null,
+          warehouse: warehouse || null,
+          role_name: roleName || null,
+          team_id: teamId === "" ? null : Number(teamId),
+        }),
+      });
+      setMsg("Redirecionando para o login Snowflake no browser…");
+      window.location.href = res.authorize_url;
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Falha ao iniciar OAuth.");
+      setBusy(false);
+    }
+  }
+
   async function submit(testOnly: boolean) {
     setErr(null);
     setMsg(null);
+    if (method === "browser_oauth") {
+      await startBrowserOAuth();
+      return;
+    }
     setBusy(true);
+    const resolvedSecret = (secret || secretRef.current?.value || "").trim();
+    if (!resolvedSecret) {
+      setErr(
+        method === "pat"
+          ? "Cole o PAT, ou use Browser OAuth (como Cortex) sem token."
+          : "Informe a senha do usuário Snowflake.",
+      );
+      setBusy(false);
+      secretRef.current?.focus();
+      return;
+    }
     const payload = {
       account_identifier: account,
       username: sfUser,
       auth_method: method,
-      secret: method === "pat" || method === "password" ? secret : null,
-      authenticator_url: method === "sso" ? authenticatorUrl || null : null,
+      secret: resolvedSecret,
       warehouse: warehouse || null,
       role_name: roleName || null,
       name: name || null,
@@ -166,7 +204,6 @@ export function ConnectionsPage() {
   }
 
   const methodMeta = ALL_METHODS.find((m) => m.key === method)!;
-  const showPatSwitch = Boolean(err && shouldOfferPatSwitch(err));
 
   return (
     <div>
@@ -194,8 +231,8 @@ export function ConnectionsPage() {
         <div className="stack">
           {!connections.length ? (
             <div className="info-box">
-              Nenhuma conexão ainda. Use Sign in to Snowflake com <strong>PAT</strong>{" "}
-              (recomendado). Ver também <code>docs/CONECTAR_PAT.md</code>.
+              Nenhuma conexão ainda. Use <strong>Browser OAuth (como Cortex)</strong> — login no
+              browser, sem PAT.
             </div>
           ) : (
             connections.map((c) => (
@@ -237,70 +274,32 @@ export function ConnectionsPage() {
             void submit(false);
           }}
         >
-          <div className="guide-box">
-            <strong>Como obter account identifier e login name</strong>
-            <ol>
-              <li>
-                Acesse{" "}
-                <a href="https://app.snowflake.com" target="_blank" rel="noreferrer">
-                  app.snowflake.com
-                </a>{" "}
-                e entre.
-              </li>
-              <li>Clique no avatar (canto inferior esquerdo).</li>
-              <li>Selecione Account → View account details.</li>
-              <li>Copie account identifier e login name.</li>
-            </ol>
-            <p className="muted" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
-              Labels alinhados ao Cortex Desktop. Guia PAT: <code>docs/CONECTAR_PAT.md</code>.
+          <div className="info-box">
+            <strong>Login via browser (recomendado)</strong>
+            <p style={{ marginBottom: 0 }}>
+              Igual ao Local OAuth do Cortex: você autentica no Snowflake no browser; o portal
+              guarda o token OAuth. Não usa PAT nem usuário de serviço.
             </p>
-          </div>
-
-          <div className="warn-box">
-            <strong>Local OAuth no Cortex funciona no desktop.</strong> Neste portal a API
-            roda no <strong>Docker</strong> — use <strong>PAT</strong> (método estável para
-            suporte).
           </div>
 
           <label>
             Method
             <select value={method} onChange={(e) => setMethod(e.target.value)}>
-              <optgroup label="Recomendado (portal Docker)">
-                {METHODS_RECOMMENDED.map((m) => (
-                  <option key={m.key} value={m.key}>
-                    {m.label}
-                  </option>
-                ))}
-              </optgroup>
-              <optgroup label="Avançado (labels Cortex)">
-                {METHODS_ADVANCED.map((m) => (
-                  <option key={m.key} value={m.key}>
-                    {m.label}
-                  </option>
-                ))}
-              </optgroup>
+              {METHODS_RECOMMENDED.map((m) => (
+                <option key={m.key} value={m.key}>
+                  {m.label}
+                </option>
+              ))}
             </select>
           </label>
           <div className="info-box">{methodMeta.desc}</div>
-          {method === "local_oauth" && (
-            <div className="warn-box">
-              Local OAuth aqui ≠ Cortex no Mac: o callback OAuth ocorre no container. Prefira{" "}
-              <strong>PAT</strong>.
-            </div>
-          )}
-          {method === "sso" && (
-            <div className="warn-box">
-              External Browser (SSO) exige SAML2 na conta. Sem IdP configurado → 390190. Use{" "}
-              <strong>PAT</strong>.
-            </div>
-          )}
 
           <label>
             Account Identifier *
             <input
               value={account}
               onChange={(e) => setAccount(e.target.value)}
-              placeholder="myorg-myaccount"
+              placeholder="A8614549778771-PONCETECH_PARTNER"
               required
             />
           </label>
@@ -309,7 +308,7 @@ export function ConnectionsPage() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="auto-generated from account"
+              placeholder="PONCETECH"
             />
           </label>
           <label>
@@ -317,7 +316,7 @@ export function ConnectionsPage() {
             <input
               value={sfUser}
               onChange={(e) => setSfUser(e.target.value)}
-              placeholder="your-username"
+              placeholder="JANSALVADOR"
               required
             />
           </label>
@@ -331,17 +330,6 @@ export function ConnectionsPage() {
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
                 required
-              />
-            </label>
-          ) : null}
-
-          {method === "sso" ? (
-            <label>
-              URL do IdP (SSO)
-              <input
-                value={authenticatorUrl}
-                onChange={(e) => setAuthenticatorUrl(e.target.value)}
-                placeholder="https://org.okta.com/..."
               />
             </label>
           ) : null}
@@ -372,32 +360,29 @@ export function ConnectionsPage() {
             </select>
           </label>
 
-          {err ? (
-            <div className="error-box">
-              <div>{err}</div>
-              {showPatSwitch ? (
-                <div className="row-actions" style={{ marginTop: "0.75rem" }}>
-                  <button type="button" className="btn primary" onClick={switchToPat}>
-                    Trocar para PAT
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          {err ? <div className="error-box">{err}</div> : null}
           {msg ? <div className="success-box">{msg}</div> : null}
 
           <div className="row-actions">
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={() => void submit(true)}
-            >
-              Testar conexão
-            </button>
-            <button type="submit" className="btn primary" disabled={busy}>
-              Sign In / Salvar
-            </button>
+            {method === "browser_oauth" ? (
+              <button type="submit" className="btn primary" disabled={busy}>
+                Conectar via browser
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busy}
+                  onClick={() => void submit(true)}
+                >
+                  Testar conexão
+                </button>
+                <button type="submit" className="btn primary" disabled={busy}>
+                  Sign In / Salvar
+                </button>
+              </>
+            )}
           </div>
         </form>
       )}

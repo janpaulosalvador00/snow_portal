@@ -9,7 +9,7 @@
 5. Optional: Warehouse `COMPUTE_WH`, Role `ACCOUNTADMIN`
 6. **Conectar via browser** → faça login no Snowflake → volta ao portal com a conexão salva
 
-O callback OAuth usa `http://127.0.0.1:8000/api/oauth/callback` (porta da API publicada no Docker).
+O callback OAuth usa `http://127.0.0.1:8000` (igual aos drivers Snowflake / Cortex).
 
 ## Alternativa: PAT
 

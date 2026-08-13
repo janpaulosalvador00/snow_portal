@@ -25,7 +25,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-snow_portal}:${POSTGRES_PASSWORD:-snow_portal}@postgres:5432/${POSTGRES_DB:-snow_portal}
       SNOW_PORTAL_RUNTIME: docker
-      OAUTH_REDIRECT_URI: http://127.0.0.1:8000/api/oauth/callback
+      OAUTH_REDIRECT_URI: http://127.0.0.1:8000
       PORTAL_PUBLIC_URL: http://localhost:8501
     depends_on:
       postgres:

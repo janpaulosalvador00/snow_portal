@@ -1,0 +1,9 @@
+streamlit==1.41.1
+psycopg2-binary==2.9.10
+bcrypt==4.2.1
+cryptography==44.0.0
+snowflake-connector-python==3.12.3
+pandas==2.2.3
+plotly==5.24.1
+python-dotenv==1.0.1
+SQLAlchemy==2.0.36

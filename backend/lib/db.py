@@ -211,6 +211,46 @@ def create_user(username: str, password: str, role: str, team_id: int | None) ->
         )
 
 
+def update_user(
+    user_id: int,
+    *,
+    username: str | None = None,
+    password: str | None = None,
+    role: str | None = None,
+    team_id: int | None = None,
+    clear_team: bool = False,
+    is_active: bool | None = None,
+) -> bool:
+    fields: list[str] = []
+    values: list[Any] = []
+    if username is not None:
+        fields.append("username = %s")
+        values.append(username)
+    if password:
+        fields.append("password_hash = %s")
+        values.append(hash_password(password))
+    if role is not None:
+        fields.append("role = %s")
+        values.append(role)
+    if clear_team:
+        fields.append("team_id = NULL")
+    elif team_id is not None:
+        fields.append("team_id = %s")
+        values.append(team_id)
+    if is_active is not None:
+        fields.append("is_active = %s")
+        values.append(is_active)
+    if not fields:
+        return False
+    values.append(user_id)
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            f"UPDATE users SET {', '.join(fields)} WHERE id = %s",
+            values,
+        )
+        return cur.rowcount > 0
+
+
 def list_teams() -> list[dict]:
     with db_cursor() as cur:
         cur.execute("SELECT id, name FROM teams ORDER BY name")
@@ -221,6 +261,12 @@ def create_team(name: str) -> int:
     with db_cursor(commit=True) as cur:
         cur.execute("INSERT INTO teams (name) VALUES (%s) RETURNING id", (name,))
         return cur.fetchone()["id"]
+
+
+def update_team(team_id: int, name: str) -> bool:
+    with db_cursor(commit=True) as cur:
+        cur.execute("UPDATE teams SET name = %s WHERE id = %s", (name, team_id))
+        return cur.rowcount > 0
 
 
 def list_connections_for_user(user: dict) -> list[dict]:

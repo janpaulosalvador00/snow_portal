@@ -14,13 +14,18 @@ from backend.lib.config import get_settings
 security = HTTPBearer(auto_error=False)
 
 
+def public_role(role: str | None) -> str:
+    value = (role or "").strip().lower()
+    return "suporte" if value == "analyst" else value
+
+
 def create_access_token(user: dict) -> str:
     settings = get_settings()
     hours = int(settings.get("session_timeout_hours", 12))
     payload = {
         "sub": str(user["id"]),
         "username": user["username"],
-        "role": user["role"],
+        "role": public_role(user["role"]),
         "team_id": user.get("team_id"),
         "exp": datetime.now(timezone.utc) + timedelta(hours=hours),
         "iat": datetime.now(timezone.utc),
@@ -57,7 +62,7 @@ def get_current_user(
     return {
         "id": user["id"],
         "username": user["username"],
-        "role": user["role"],
+        "role": public_role(user["role"]),
         "team_id": user.get("team_id"),
         "team_name": user.get("team_name"),
     }

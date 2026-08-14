@@ -1,0 +1,1793 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snow Portal — Alerts (mockup UX)</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #1a1d21;
+        --panel-2: #15181d;
+        --border: #2a2f36;
+        --text: #e8eaed;
+        --muted: #8b939e;
+        --accent: #29b5e8;
+        --danger: #c45c5c;
+        --ok: #3d9a6a;
+        --warn: #c9a227;
+        --hairline: rgba(232, 234, 237, 0.1);
+        font-family: "IBM Plex Sans", system-ui, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.45;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+      }
+
+      h1,
+      h2,
+      h3 {
+        font-weight: 600;
+        margin: 0 0 0.5rem;
+      }
+
+      .muted {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .mono {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      /* ---------- App shell ---------- */
+      .app-shell {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        min-height: 100dvh;
+        align-items: start;
+      }
+
+      .sidebar {
+        background: #14171c;
+        border-right: 1px solid var(--border);
+        padding: 1.15rem 0.75rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        position: sticky;
+        top: 0;
+        height: 100dvh;
+        overflow-y: auto;
+      }
+
+      .brand {
+        font-weight: 600;
+        font-size: 1.05rem;
+        letter-spacing: -0.02em;
+        padding: 0 0.7rem;
+      }
+
+      .user-meta {
+        font-size: 0.8rem;
+        color: var(--muted);
+        padding: 0 0.7rem;
+        margin-bottom: 0.25rem;
+      }
+
+      .sidebar nav {
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+        flex: 1;
+      }
+
+      .sidebar nav a {
+        position: relative;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 0.9rem;
+        min-height: 38px;
+        padding: 0 0.7rem;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.625rem;
+        width: 100%;
+        transition:
+          background 150ms ease,
+          color 150ms ease;
+      }
+
+      .sidebar nav a:hover {
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+      }
+
+      .sidebar nav a:focus-visible {
+        outline-offset: 1px;
+      }
+
+      /* Ativo: degradê horizontal suave, sem borda visível e sem glow. */
+      .sidebar nav a.active {
+        color: var(--accent);
+        background: linear-gradient(
+          90deg,
+          rgba(41, 181, 232, 0.14),
+          rgba(41, 181, 232, 0.04) 55%,
+          transparent
+        );
+      }
+
+      /* Accent cue: barra curta de 2px, centrada verticalmente. */
+      .sidebar nav a.active::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 2px;
+        height: 18px;
+        border-radius: 999px;
+        background: var(--accent);
+      }
+
+      .nav-icon {
+        flex-shrink: 0;
+        opacity: 0.7;
+        transition: opacity 150ms ease;
+      }
+
+      .sidebar nav a:hover .nav-icon,
+      .sidebar nav a.active .nav-icon {
+        opacity: 1;
+      }
+
+      .nav-badge {
+        margin-left: auto;
+        background: #d0615f;
+        color: #fff;
+        border-radius: 999px;
+        font-size: 0.68rem;
+        font-weight: 600;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 0.35rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+      }
+
+      .logout {
+        margin-top: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.625rem;
+        width: 100%;
+      }
+
+      .sidebar .logout {
+        min-height: 38px;
+        padding: 0 0.7rem;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        background: #1f242c;
+        color: var(--text);
+        font-size: 0.9rem;
+        transition:
+          background-color 150ms ease,
+          color 150ms ease;
+      }
+
+      .sidebar .logout:hover:not(:disabled) {
+        background: #272d36;
+        color: var(--text);
+      }
+
+      .main {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .overview {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: var(--bg);
+        padding: 1rem 2rem 0;
+      }
+
+      .clients-scroll {
+        padding: 1rem 2rem 1.5rem;
+      }
+
+      /* ---------- Buttons / inputs ---------- */
+      .btn {
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        border-radius: 8px;
+        padding: 0.5rem 0.85rem;
+        font: inherit;
+        font-size: 0.85rem;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      .btn:hover:not(:disabled) {
+        background: #1f242c;
+      }
+
+      .btn.primary {
+        background: var(--accent);
+        color: #0b0f14;
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+
+      .btn.primary:hover:not(:disabled) {
+        background: #48c4f2;
+      }
+
+      .btn.small {
+        padding: 0.3rem 0.6rem;
+        font-size: 0.78rem;
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      select,
+      input[type="search"] {
+        background: #12151a;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 0.4rem 0.55rem;
+        font: inherit;
+        font-size: 0.82rem;
+      }
+
+      /* ---------- Page header ---------- */
+      .page-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .page-header-title {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.55rem 0.7rem;
+        min-width: 0;
+        max-width: min(720px, 100%);
+      }
+
+      .page-header h1 {
+        margin: 0;
+        font-size: 1.65rem;
+        line-height: 1.15;
+      }
+
+      .page-header-sep {
+        color: #5c6570;
+        font-weight: 300;
+        font-size: 1.1rem;
+        line-height: 1;
+        opacity: 0.85;
+        user-select: none;
+      }
+
+      .page-header-lead {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        font-weight: 400;
+        line-height: 1.3;
+        min-width: 0;
+      }
+
+      .page-header-right {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .refresh-stamps {
+        display: grid;
+        grid-template-columns: max-content max-content;
+        column-gap: 0.55rem;
+        row-gap: 0.15rem;
+        align-items: baseline;
+        text-align: left;
+        font-size: 0.78rem;
+        line-height: 1.35;
+      }
+
+      .refresh-stamp-label {
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .refresh-stamp-value {
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      .refresh-field {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+
+      .status-bar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem 1.5rem;
+        flex-wrap: wrap;
+        margin: 0.75rem 0 0;
+      }
+
+      .status-line {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        font-size: 0.82rem;
+        color: var(--muted);
+        margin: 0;
+        flex: 1 1 260px;
+        min-width: 0;
+      }
+
+      .status-line > span:last-child {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--ok);
+        flex-shrink: 0;
+        margin-top: 0.4rem;
+      }
+
+      .status-dot.is-busy {
+        background: var(--accent);
+        animation: pulse 1s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+
+      /* ---------- KPIs ---------- */
+      .kpis {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin: 1.15rem 0 1.25rem;
+      }
+
+      .kpi {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-top: 3px solid var(--border);
+        border-radius: 10px;
+        padding: 0.85rem 0.95rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        min-width: 0;
+      }
+
+      .kpi.is-ok {
+        border-top-color: var(--ok);
+      }
+      .kpi.is-attention {
+        border-top-color: var(--accent);
+      }
+      .kpi.is-alert {
+        border-top-color: var(--warn);
+      }
+      .kpi.is-critical {
+        border-top-color: var(--danger);
+      }
+
+      .kpi-label {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .kpi-range {
+        font-size: 0.75rem;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .kpi-value {
+        display: flex;
+        align-items: baseline;
+        gap: 0.45rem;
+        margin-top: 0.1rem;
+      }
+
+      .kpi-pct {
+        font-size: 1.6rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.1;
+      }
+
+      .kpi-count {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .kpi.is-ok .kpi-pct {
+        color: var(--ok);
+      }
+      .kpi.is-attention .kpi-pct {
+        color: var(--accent);
+      }
+      .kpi.is-alert .kpi-pct {
+        color: var(--warn);
+      }
+      .kpi.is-critical .kpi-pct {
+        color: #e88b8b;
+      }
+
+      /* ---------- Toolbar ---------- */
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem 1rem;
+        flex-wrap: wrap;
+        padding-bottom: 0.9rem;
+        margin-bottom: 0;
+        border-bottom: 1px solid var(--hairline);
+      }
+
+      .toolbar h2 {
+        margin: 0;
+        font-size: 1.05rem;
+      }
+
+      .toolbar-right {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex: 0 0 auto;
+        justify-content: flex-end;
+        min-width: 0;
+      }
+
+      .search-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.15rem 0.7rem;
+        min-height: 32px;
+        flex: 0 0 210px;
+        width: 210px;
+        min-width: 0;
+      }
+
+      .search-pill svg {
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+
+      .search-pill input {
+        background: transparent;
+        border: none;
+        color: var(--text);
+        font: inherit;
+        font-size: 0.82rem;
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
+        padding: 0.2rem 0;
+      }
+
+      .search-pill input:focus {
+        outline: none;
+      }
+
+      /* ---------- Client grid ---------- */
+      .client-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+      }
+
+      .client-card[hidden] {
+        display: none !important;
+      }
+
+      .client-card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--border);
+        border-radius: 10px;
+        padding: 0.85rem 0.9rem 1.05rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        min-width: 0;
+      }
+
+      .client-card.is-critical {
+        border-left-color: var(--danger);
+      }
+      .client-card.is-alert {
+        border-left-color: var(--warn);
+      }
+      .client-card.is-error {
+        border-left-color: var(--danger);
+        border-style: dashed;
+      }
+
+      .client-card.is-busy {
+        opacity: 0.75;
+      }
+
+      .client-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.5rem;
+        min-width: 0;
+      }
+
+      .client-name {
+        font-weight: 600;
+        font-size: 0.95rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      .client-account {
+        font-size: 0.74rem;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        white-space: nowrap;
+        flex-shrink: 0;
+        border: 1px solid transparent;
+      }
+
+      .badge.is-critical {
+        color: #f0c0c0;
+        background: #2a1515;
+        border-color: var(--danger);
+      }
+
+      .badge.is-alert {
+        color: #e8d9a0;
+        background: #241f10;
+        border-color: var(--warn);
+      }
+
+      .badge.is-error {
+        color: var(--muted);
+        background: var(--panel-2);
+        border-color: var(--border);
+      }
+
+      .monitor-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .monitor-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.35rem 0.5rem;
+        align-items: center;
+      }
+
+      .monitor-name {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.78rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .monitor-icon {
+        flex-shrink: 0;
+      }
+
+      .monitor-pct {
+        font-size: 0.82rem;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+      }
+
+      .monitor-row.is-critical .monitor-pct,
+      .monitor-row.is-critical .monitor-icon {
+        color: #e88b8b;
+      }
+
+      .monitor-row.is-alert .monitor-pct,
+      .monitor-row.is-alert .monitor-icon {
+        color: var(--warn);
+      }
+
+      .quota-track {
+        grid-column: 1 / -1;
+        height: 4px;
+        background: #2a2f36;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+
+      .quota-fill {
+        display: block;
+        height: 100%;
+        border-radius: 999px;
+      }
+
+      .monitor-row.is-critical .quota-fill {
+        background: var(--danger);
+      }
+
+      .monitor-row.is-alert .quota-fill {
+        background: var(--warn);
+      }
+
+      .monitor-more {
+        font-size: 0.74rem;
+        color: var(--muted);
+      }
+
+      .client-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        border-top: 1px solid var(--hairline);
+        padding-top: 0.75rem;
+        margin-top: auto;
+      }
+
+      .client-updated {
+        display: grid;
+        grid-template-columns: max-content max-content;
+        gap: 0.12rem 0.45rem;
+        align-items: baseline;
+        font-size: 0.67rem;
+        white-space: nowrap;
+      }
+
+      .client-update-label {
+        color: var(--muted);
+      }
+
+      .client-update-value {
+        color: var(--text);
+        font-size: 0.7rem;
+        font-weight: 600;
+      }
+
+      .client-actions {
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .interval-cue {
+        color: var(--muted);
+        font-size: 0.67rem;
+        white-space: nowrap;
+      }
+
+      .client-actions select {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.4rem;
+      }
+
+      .card-error-msg {
+        font-size: 0.8rem;
+        color: #f0c0c0;
+        background: #2a1515;
+        border-radius: 6px;
+        padding: 0.5rem 0.6rem;
+      }
+
+      .empty-state {
+        background: var(--panel-2);
+        border-left: 3px solid var(--accent);
+        border-radius: 8px;
+        padding: 0.9rem 1rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      .legend {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem 1rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        font-size: 0.78rem;
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .legend-swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+        flex-shrink: 0;
+      }
+
+      .mock-note {
+        margin-top: 1rem;
+        font-size: 0.74rem;
+        color: var(--muted);
+        opacity: 0.75;
+      }
+
+      @media (max-width: 1180px) {
+        .kpis {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .client-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 860px) {
+        .app-shell {
+          grid-template-columns: 1fr;
+          min-height: 0;
+        }
+        .sidebar {
+          position: static;
+          height: auto;
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+        .overview {
+          position: static;
+          padding: 1.25rem 1rem 0;
+        }
+        .clients-scroll {
+          padding: 1rem 1rem 1.25rem;
+        }
+        .client-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .page-header-right {
+          justify-content: flex-start;
+          width: 100%;
+        }
+        .toolbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .toolbar-right {
+          flex: 1 1 auto;
+          justify-content: flex-end;
+        }
+        .toolbar-right select {
+          flex: 0 1 auto;
+          min-width: 0;
+        }
+        .client-foot {
+          align-items: flex-start;
+        }
+        .client-actions {
+          flex: 1 1 auto;
+          justify-content: flex-end;
+        }
+        .client-actions select {
+          min-width: 0;
+        }
+        .legend {
+          justify-content: flex-start;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .kpis {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .toolbar-right {
+          width: 100%;
+        }
+        .search-pill {
+          flex: 1 1 130px;
+          width: auto;
+        }
+        .toolbar-right select {
+          max-width: 155px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">Snow Portal</div>
+        <div class="user-meta">Time: Suporte</div>
+        <nav aria-label="Navegação principal">
+          <a href="#">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 10v10h14V10" />
+              <path d="M10 20v-6h4v6" />
+            </svg>
+            Início
+          </a>
+          <a href="#">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
+            Conexões
+          </a>
+          <a href="#">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 19V5" />
+              <path d="M4 19h16" />
+              <path d="M8 17V10" />
+              <path d="M12 17V7" />
+              <path d="M16 17v-4" />
+            </svg>
+            Cost Management
+          </a>
+          <a href="#" class="active" aria-current="page">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3a6 6 0 0 0-6 6c0 4-2 5-2 5h16s-2-1-2-5a6 6 0 0 0-6-6z" />
+              <path d="M10.5 20a1.8 1.8 0 0 0 3 0" />
+            </svg>
+            Alerts
+            <span class="nav-badge" aria-label="6 clientes exigem atenção">6</span>
+          </a>
+          <a href="#">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M5 20a7 7 0 0 1 14 0" />
+              <path d="M19 4v4" />
+              <path d="M17 6h4" />
+            </svg>
+            Administração
+          </a>
+        </nav>
+        <button type="button" class="btn ghost logout">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          Sair
+        </button>
+      </aside>
+
+      <main class="main">
+        <div class="overview">
+        <div class="page-header">
+          <div class="page-header-title">
+            <h1>Alerts</h1>
+            <span class="page-header-sep" aria-hidden="true">—</span>
+            <p class="page-header-lead">
+              Monitoramento de consumo de todos os clientes ativos.
+            </p>
+          </div>
+          <div class="page-header-right">
+            <div class="refresh-stamps" role="status" aria-live="polite">
+              <span class="refresh-stamp-label">Última atualização</span>
+              <strong class="refresh-stamp-value" id="last-update">14/08/2026 10:18</strong>
+              <span class="refresh-stamp-label">Próxima atualização</span>
+              <strong class="refresh-stamp-value" id="next-update">14/08/2026 10:23</strong>
+            </div>
+            <label class="refresh-field" for="global-interval">
+              <span class="sr-only">Intervalo de atualização automática</span>
+              <select id="global-interval">
+                <option value="0">Desligada</option>
+                <option value="60">1 min</option>
+                <option value="300" selected>5 min</option>
+                <option value="600">10 min</option>
+                <option value="900">15 min</option>
+                <option value="1800">30 min</option>
+                <option value="3600">60 min</option>
+              </select>
+            </label>
+            <button type="button" class="btn primary" id="refresh-all">
+              <span aria-hidden="true">↻</span> Atualizar todas
+            </button>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <p class="status-line">
+            <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+            <span id="status-text" role="status" aria-live="polite">
+              18 conexões ativas · 1 conta desligada
+            </span>
+          </p>
+
+          <div class="legend" aria-label="Legenda de severidade">
+            <span class="legend-item">
+              <span class="legend-swatch" style="background: var(--warn)"></span>
+              Alerta — 70% a 89,9% da cota
+            </span>
+            <span class="legend-item">
+              <span class="legend-swatch" style="background: var(--danger)"></span>
+              Crítico — 90% ou mais da cota
+            </span>
+          </div>
+        </div>
+
+        <section aria-labelledby="kpis-title">
+          <h2 id="kpis-title" class="sr-only">Distribuição de clientes por faixa de consumo</h2>
+          <div class="kpis">
+            <div class="kpi is-ok">
+              <span class="kpi-label">
+                Saudáveis
+                <span class="kpi-range">&lt; 50%</span>
+              </span>
+              <span class="kpi-value">
+                <span class="kpi-pct">38,9%</span>
+                <span class="kpi-count">7 de 18 clientes</span>
+              </span>
+            </div>
+            <div class="kpi is-attention">
+              <span class="kpi-label">
+                Atenção
+                <span class="kpi-range">50–69,9%</span>
+              </span>
+              <span class="kpi-value">
+                <span class="kpi-pct">27,8%</span>
+                <span class="kpi-count">5 de 18 clientes</span>
+              </span>
+            </div>
+            <div class="kpi is-alert">
+              <span class="kpi-label">
+                Alerta
+                <span class="kpi-range">70–89,9%</span>
+              </span>
+              <span class="kpi-value">
+                <span class="kpi-pct">22,2%</span>
+                <span class="kpi-count">4 de 18 clientes</span>
+              </span>
+            </div>
+            <div class="kpi is-critical">
+              <span class="kpi-label">
+                Críticos
+                <span class="kpi-range">&ge; 90%</span>
+              </span>
+              <span class="kpi-value">
+                <span class="kpi-pct">11,1%</span>
+                <span class="kpi-count">2 de 18 clientes</span>
+              </span>
+            </div>
+          </div>
+        </section>
+
+          <div class="toolbar">
+            <h2 id="clients-title">
+              Clientes críticos
+              <span class="muted" id="clients-count" style="font-weight: 400">
+                — 6 acima de 70%, ordenados pelo monitor mais crítico
+              </span>
+            </h2>
+            <div class="toolbar-right">
+              <span class="search-pill">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" />
+                  <line x1="16.5" y1="16.5" x2="21" y2="21" />
+                </svg>
+                <label class="sr-only" for="client-search">Buscar cliente</label>
+                <input id="client-search" type="search" placeholder="Buscar cliente…" />
+              </span>
+              <label class="sr-only" for="severity-filter">Filtrar por severidade</label>
+              <select id="severity-filter">
+                <option value="all">Todas as severidades</option>
+                <option value="critical">Somente críticos</option>
+                <option value="alert">Somente alerta</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="clients-scroll">
+        <section aria-labelledby="clients-title">
+          <div class="client-grid" id="client-grid">
+            <!-- Crítico -->
+            <article class="client-card is-critical" data-client="Unimed Maceió" data-severity="critical">
+              <div class="client-head">
+                <div style="min-width: 0">
+                  <div class="client-name" title="Unimed Maceió">Unimed Maceió</div>
+                  <div class="client-account mono">PGYKNEW-LU28440</div>
+                </div>
+                <span class="badge is-critical">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /></svg>
+                  Crítico
+                </span>
+              </div>
+              <ul class="monitor-list">
+                <li class="monitor-row is-critical">
+                  <span class="monitor-name" title="MONITOR_WH_ANALISTA">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /></svg>
+                    MONITOR_WH_ANALISTA
+                  </span>
+                  <span class="monitor-pct">101,0%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 100%"></span></span>
+                </li>
+                <li class="monitor-row is-critical">
+                  <span class="monitor-name" title="MONITOR_EMPRESA">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /></svg>
+                    MONITOR_EMPRESA
+                  </span>
+                  <span class="monitor-pct">94,3%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 94.3%"></span></span>
+                </li>
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_WH_CON_EXT">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_WH_CON_EXT
+                  </span>
+                  <span class="monitor-pct">78,5%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 78.5%"></span></span>
+                </li>
+                <li class="monitor-more">+ 3 monitores abaixo de 70%</li>
+              </ul>
+              <div class="client-foot">
+                <span class="client-updated" data-last-offset="2">
+                  <span class="client-update-label">Última atualização</span>
+                  <strong class="client-update-value" data-card-last>—</strong>
+                  <span class="client-update-label">Próxima atualização</span>
+                  <strong class="client-update-value" data-card-next>—</strong>
+                </span>
+                <span class="client-actions">
+                  <label class="sr-only" for="int-unimed">Intervalo de atualização de Unimed Maceió</label>
+                  <select id="int-unimed" data-card-interval>
+                    <option value="0">Desligado</option>
+                    <option value="global" selected>Automático</option>
+                    <option value="60">1 min</option>
+                    <option value="300">5 min</option>
+                    <option value="600">10 min</option>
+                    <option value="900">15 min</option>
+                    <option value="1800">30 min</option>
+                    <option value="3600">60 min</option>
+                  </select>
+                  <button type="button" class="btn small" data-refresh-card>
+                    <span aria-hidden="true">↻</span>
+                    <span class="sr-only">Atualizar Unimed Maceió</span>
+                  </button>
+                </span>
+              </div>
+            </article>
+
+            <!-- Crítico -->
+            <article class="client-card is-critical" data-client="Poncetech" data-severity="critical">
+              <div class="client-head">
+                <div style="min-width: 0">
+                  <div class="client-name" title="Poncetech">Poncetech</div>
+                  <div class="client-account mono">A8614549778771-PONCETECH_PARTNER</div>
+                </div>
+                <span class="badge is-critical">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /></svg>
+                  Crítico
+                </span>
+              </div>
+              <ul class="monitor-list">
+                <li class="monitor-row is-critical">
+                  <span class="monitor-name" title="MONITORAMENTO_EMPRESA">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="9" /></svg>
+                    MONITORAMENTO_EMPRESA
+                  </span>
+                  <span class="monitor-pct">92,7%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 92.7%"></span></span>
+                </li>
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_WH_STREAMLIT">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_WH_STREAMLIT
+                  </span>
+                  <span class="monitor-pct">71,2%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 71.2%"></span></span>
+                </li>
+                <li class="monitor-more">+ 5 monitores abaixo de 70%</li>
+              </ul>
+              <div class="client-foot">
+                <span class="client-updated" data-last-offset="2">
+                  <span class="client-update-label">Última atualização</span>
+                  <strong class="client-update-value" data-card-last>—</strong>
+                  <span class="client-update-label">Próxima atualização</span>
+                  <strong class="client-update-value" data-card-next>—</strong>
+                </span>
+                <span class="client-actions">
+                  <label class="sr-only" for="int-ponce">Intervalo de atualização de Poncetech</label>
+                  <select id="int-ponce" data-card-interval>
+                    <option value="0">Desligado</option>
+                    <option value="global">Automático</option>
+                    <option value="60" selected>1 min</option>
+                    <option value="300">5 min</option>
+                    <option value="600">10 min</option>
+                    <option value="900">15 min</option>
+                    <option value="1800">30 min</option>
+                    <option value="3600">60 min</option>
+                  </select>
+                  <button type="button" class="btn small" data-refresh-card>
+                    <span aria-hidden="true">↻</span>
+                    <span class="sr-only">Atualizar Poncetech</span>
+                  </button>
+                </span>
+              </div>
+            </article>
+
+            <!-- Alerta -->
+            <article class="client-card is-alert" data-client="Hospital Santa Clara" data-severity="alert">
+              <div class="client-head">
+                <div style="min-width: 0">
+                  <div class="client-name" title="Hospital Santa Clara">Hospital Santa Clara</div>
+                  <div class="client-account mono">XKB1290-SANTACLARA</div>
+                </div>
+                <span class="badge is-alert">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                  Alerta
+                </span>
+              </div>
+              <ul class="monitor-list">
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_ACCOUNT_GERAL">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_ACCOUNT_GERAL
+                  </span>
+                  <span class="monitor-pct">86,4%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 86.4%"></span></span>
+                </li>
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_WH_BI">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_WH_BI
+                  </span>
+                  <span class="monitor-pct">73,0%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 73%"></span></span>
+                </li>
+                <li class="monitor-more">+ 2 monitores abaixo de 70%</li>
+              </ul>
+              <div class="client-foot">
+                <span class="client-updated" data-last-offset="2">
+                  <span class="client-update-label">Última atualização</span>
+                  <strong class="client-update-value" data-card-last>—</strong>
+                  <span class="client-update-label">Próxima atualização</span>
+                  <strong class="client-update-value" data-card-next>—</strong>
+                </span>
+                <span class="client-actions">
+                  <label class="sr-only" for="int-santa">Intervalo de atualização de Hospital Santa Clara</label>
+                  <select id="int-santa" data-card-interval>
+                    <option value="0">Desligado</option>
+                    <option value="global" selected>Automático</option>
+                    <option value="60">1 min</option>
+                    <option value="300">5 min</option>
+                    <option value="600">10 min</option>
+                    <option value="900">15 min</option>
+                    <option value="1800">30 min</option>
+                    <option value="3600">60 min</option>
+                  </select>
+                  <button type="button" class="btn small" data-refresh-card>
+                    <span aria-hidden="true">↻</span>
+                    <span class="sr-only">Atualizar Hospital Santa Clara</span>
+                  </button>
+                </span>
+              </div>
+            </article>
+
+            <!-- Alerta em atualização -->
+            <article class="client-card is-alert is-busy" data-client="Rede Bela Vista" data-severity="alert" aria-busy="true">
+              <div class="client-head">
+                <div style="min-width: 0">
+                  <div class="client-name" title="Rede Bela Vista">Rede Bela Vista</div>
+                  <div class="client-account mono">TRQ8842-BELAVISTA</div>
+                </div>
+                <span class="badge is-alert">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                  Alerta
+                </span>
+              </div>
+              <ul class="monitor-list">
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_WH_ASSISTENCIAL">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_WH_ASSISTENCIAL
+                  </span>
+                  <span class="monitor-pct">84,1%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 84.1%"></span></span>
+                </li>
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_EMPRESA_BV">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_EMPRESA_BV
+                  </span>
+                  <span class="monitor-pct">72,3%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 72.3%"></span></span>
+                </li>
+                <li class="monitor-more">+ 3 monitores abaixo de 70%</li>
+              </ul>
+              <div class="client-foot">
+                <span class="client-updated" data-last-offset="2">
+                  <span class="client-update-label">Última atualização</span>
+                  <strong class="client-update-value" data-card-last>—</strong>
+                  <span class="client-update-label">Próxima atualização</span>
+                  <strong class="client-update-value" data-card-next>—</strong>
+                </span>
+                <span class="client-actions">
+                  <label class="sr-only" for="int-bela">Intervalo de atualização de Rede Bela Vista</label>
+                  <select id="int-bela" data-card-interval>
+                    <option value="0">Desligado</option>
+                    <option value="global" selected>Automático</option>
+                    <option value="60">1 min</option>
+                    <option value="300">5 min</option>
+                    <option value="600">10 min</option>
+                    <option value="900">15 min</option>
+                    <option value="1800">30 min</option>
+                    <option value="3600">60 min</option>
+                  </select>
+                  <button type="button" class="btn small" data-refresh-card>
+                    <span aria-hidden="true">↻</span>
+                    <span class="sr-only">Atualizar Rede Bela Vista</span>
+                  </button>
+                </span>
+              </div>
+            </article>
+
+            <!-- Alerta -->
+            <article class="client-card is-alert" data-client="Log Transportes" data-severity="alert">
+              <div class="client-head">
+                <div style="min-width: 0">
+                  <div class="client-name" title="Log Transportes">Log Transportes</div>
+                  <div class="client-account mono">MDW5521-LOGTRANS</div>
+                </div>
+                <span class="badge is-alert">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                  Alerta
+                </span>
+              </div>
+              <ul class="monitor-list">
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_WH_ETL">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_WH_ETL
+                  </span>
+                  <span class="monitor-pct">81,9%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 81.9%"></span></span>
+                </li>
+                <li class="monitor-more">+ 4 monitores abaixo de 70%</li>
+              </ul>
+              <div class="client-foot">
+                <span class="client-updated" data-last-offset="6">
+                  <span class="client-update-label">Última atualização</span>
+                  <strong class="client-update-value" data-card-last>—</strong>
+                  <span class="client-update-label">Próxima atualização</span>
+                  <strong class="client-update-value" data-card-next>—</strong>
+                </span>
+                <span class="client-actions">
+                  <label class="sr-only" for="int-log">Intervalo de atualização de Log Transportes</label>
+                  <select id="int-log" data-card-interval>
+                    <option value="0" selected>Desligado</option>
+                    <option value="global">Automático</option>
+                    <option value="60">1 min</option>
+                    <option value="300">5 min</option>
+                    <option value="600">10 min</option>
+                    <option value="900">15 min</option>
+                    <option value="1800">30 min</option>
+                    <option value="3600">60 min</option>
+                  </select>
+                  <button type="button" class="btn small" data-refresh-card>
+                    <span aria-hidden="true">↻</span>
+                    <span class="sr-only">Atualizar Log Transportes</span>
+                  </button>
+                </span>
+              </div>
+            </article>
+
+            <!-- Alerta -->
+            <article class="client-card is-alert" data-client="Agro Sul Cooperativa" data-severity="alert">
+              <div class="client-head">
+                <div style="min-width: 0">
+                  <div class="client-name" title="Agro Sul Cooperativa">Agro Sul Cooperativa</div>
+                  <div class="client-account mono">JHT0031-AGROSUL</div>
+                </div>
+                <span class="badge is-alert">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                  Alerta
+                </span>
+              </div>
+              <ul class="monitor-list">
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_EMPRESA_AGRO">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_EMPRESA_AGRO
+                  </span>
+                  <span class="monitor-pct">75,6%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 75.6%"></span></span>
+                </li>
+                <li class="monitor-row is-alert">
+                  <span class="monitor-name" title="MONITOR_WH_INGESTAO">
+                    <svg class="monitor-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4 2 20h20L12 4z" /></svg>
+                    MONITOR_WH_INGESTAO
+                  </span>
+                  <span class="monitor-pct">70,4%</span>
+                  <span class="quota-track"><span class="quota-fill" style="width: 70.4%"></span></span>
+                </li>
+                <li class="monitor-more">+ 1 monitor abaixo de 70%</li>
+              </ul>
+              <div class="client-foot">
+                <span class="client-updated" data-last-offset="2">
+                  <span class="client-update-label">Última atualização</span>
+                  <strong class="client-update-value" data-card-last>—</strong>
+                  <span class="client-update-label">Próxima atualização</span>
+                  <strong class="client-update-value" data-card-next>—</strong>
+                </span>
+                <span class="client-actions">
+                  <label class="sr-only" for="int-agro">Intervalo de atualização de Agro Sul Cooperativa</label>
+                  <select id="int-agro" data-card-interval>
+                    <option value="0">Desligado</option>
+                    <option value="global" selected>Automático</option>
+                    <option value="60">1 min</option>
+                    <option value="300">5 min</option>
+                    <option value="600">10 min</option>
+                    <option value="900">15 min</option>
+                    <option value="1800">30 min</option>
+                    <option value="3600">60 min</option>
+                  </select>
+                  <button type="button" class="btn small" data-refresh-card>
+                    <span aria-hidden="true">↻</span>
+                    <span class="sr-only">Atualizar Agro Sul Cooperativa</span>
+                  </button>
+                </span>
+              </div>
+            </article>
+
+            <!-- Conta desligada (fora de monitoramento) -->
+            <article class="client-card is-error" data-client="Construtora Nova Era" data-severity="error">
+              <div class="client-head">
+                <div style="min-width: 0">
+                  <div class="client-name" title="Construtora Nova Era">Construtora Nova Era</div>
+                  <div class="client-account mono">VBN7742-NOVAERA</div>
+                </div>
+                <span class="badge is-error">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+                    <path d="M12 4v7" />
+                    <path d="M7.5 7a6.5 6.5 0 1 0 9 0" />
+                  </svg>
+                  Desligada
+                </span>
+              </div>
+              <p class="card-error-msg">
+                Conta desligada — sem monitoramento: sessão OAuth expirada. As outras contas seguem
+                atualizando.
+              </p>
+              <div class="client-foot">
+                <span class="client-updated" data-last-offset="1">
+                  <span class="client-update-label">Última atualização</span>
+                  <strong class="client-update-value" data-card-last>—</strong>
+                  <span class="client-update-label">Próxima atualização</span>
+                  <strong class="client-update-value" data-card-next>Auto desligada</strong>
+                </span>
+                <span class="client-actions">
+                  <a class="btn small" href="#">Revalidar conexão</a>
+                  <button type="button" class="btn small" data-refresh-card>
+                    <span aria-hidden="true">↻</span>
+                    <span class="sr-only">Tentar novamente Construtora Nova Era</span>
+                  </button>
+                </span>
+              </div>
+            </article>
+          </div>
+
+          <p class="empty-state" id="empty-state" hidden>
+            Nenhum cliente corresponde à busca ou ao filtro de severidade.
+          </p>
+        </section>
+
+        <p class="mock-note">
+          Mockup UX estático com dados fictícios — apenas para validação de layout, hierarquia e
+          controles de atualização.
+        </p>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      (function () {
+        const search = document.getElementById("client-search");
+        const severity = document.getElementById("severity-filter");
+        const grid = document.getElementById("client-grid");
+        const emptyState = document.getElementById("empty-state");
+        const clientsCount = document.getElementById("clients-count");
+        const statusText = document.getElementById("status-text");
+        const statusDot = document.getElementById("status-dot");
+        const globalInterval = document.getElementById("global-interval");
+        const refreshAll = document.getElementById("refresh-all");
+        const lastUpdate = document.getElementById("last-update");
+        const nextUpdate = document.getElementById("next-update");
+        const cards = Array.from(grid.querySelectorAll(".client-card"));
+
+        // Conta desligada = conexão fora de monitoramento; não confundir com
+        // atualização automática desligada em um card saudável.
+        const ACTIVE_CONNECTIONS = 18;
+        const DISABLED_ACCOUNTS = cards.filter(
+          (card) => card.dataset.severity === "error",
+        ).length;
+        let lastRefresh = new Date();
+        let globalTimer = null;
+        const cardTimers = new Map();
+        const cardFetches = new Map();
+        const cardLastRefreshes = new Map();
+
+        function intervalLabel(seconds) {
+          const n = Number(seconds);
+          if (!n) return null;
+          return n >= 60 ? `${n / 60} min` : `${n}s`;
+        }
+
+        function intervalSelect(card) {
+          return card.querySelector("[data-card-interval]");
+        }
+
+        function effectiveInterval(card) {
+          const select = intervalSelect(card);
+          if (!select) return 0;
+          return Number(select.value === "global" ? globalInterval.value : select.value);
+        }
+
+        function updateIntervalCue(card) {
+          const select = intervalSelect(card);
+          if (!select) return;
+          const actions = select.closest(".client-actions");
+          let cue = actions.querySelector(".interval-cue");
+          if (!cue) {
+            cue = document.createElement("span");
+            cue.className = "interval-cue";
+            actions.insertBefore(cue, select);
+          }
+
+          const seconds = effectiveInterval(card);
+          if (select.value === "global") {
+            cue.textContent = seconds ? `Global · ${intervalLabel(seconds)}` : "Global desligado";
+            select.title = seconds
+              ? `Automático: segue o intervalo global de ${intervalLabel(seconds)}`
+              : "Automático: atualização global desligada";
+          } else if (!seconds) {
+            cue.textContent = "Sem auto";
+            select.title = "Atualização automática desligada somente para esta conta";
+          } else {
+            cue.textContent = `Próprio · ${intervalLabel(seconds)}`;
+            select.title = `Intervalo próprio de ${intervalLabel(seconds)}; ignora o global`;
+          }
+        }
+
+        function nowLabel() {
+          return new Date().toLocaleTimeString("pt-BR", {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+        }
+
+        function dateTimeLabel(date) {
+          return `${date.toLocaleDateString("pt-BR")} ${date.toLocaleTimeString("pt-BR", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}`;
+        }
+
+        function setStatus(text, busy) {
+          statusText.textContent = text;
+          statusDot.classList.toggle("is-busy", Boolean(busy));
+        }
+
+        function setStamps(date) {
+          lastUpdate.textContent = dateTimeLabel(date);
+          const seconds = Number(globalInterval.value);
+          if (!seconds) {
+            nextUpdate.textContent = "Auto desligada";
+            return;
+          }
+          const next = new Date(date.getTime() + seconds * 1000);
+          nextUpdate.textContent = dateTimeLabel(next);
+        }
+
+        function idleStatus() {
+          const ativas = `${ACTIVE_CONNECTIONS} ${
+            ACTIVE_CONNECTIONS === 1 ? "conexão ativa" : "conexões ativas"
+          }`;
+          const desligadas = `${DISABLED_ACCOUNTS} ${
+            DISABLED_ACCOUNTS === 1 ? "conta desligada" : "contas desligadas"
+          }`;
+          setStatus(`${ativas} · ${desligadas}`, false);
+        }
+
+        function setCardStamps(card, date) {
+          const last = card.querySelector("[data-card-last]");
+          const next = card.querySelector("[data-card-next]");
+          if (!last || !next) return;
+
+          cardLastRefreshes.set(card, date);
+          last.textContent = dateTimeLabel(date);
+          const seconds = effectiveInterval(card);
+          next.textContent = seconds
+            ? dateTimeLabel(new Date(date.getTime() + seconds * 1000))
+            : "Auto desligada";
+        }
+
+        function initializeCardStamps() {
+          const now = new Date();
+          cards.forEach((card) => {
+            const stamps = card.querySelector(".client-updated");
+            const offset = Number(stamps?.dataset.lastOffset || 0);
+            setCardStamps(card, new Date(now.getTime() - offset * 60 * 1000));
+          });
+        }
+
+        function applyFilters() {
+          const q = search.value.trim().toLowerCase();
+          const sev = severity.value;
+          let visible = 0;
+          let visibleAlerts = 0;
+
+          cards.forEach((card) => {
+            const name = (card.dataset.client || "").toLowerCase();
+            const matchesText = !q || name.includes(q);
+            const matchesSeverity = sev === "all" || card.dataset.severity === sev;
+            const show = matchesText && matchesSeverity;
+            card.hidden = !show;
+            if (show) {
+              visible += 1;
+              if (card.dataset.severity !== "error") visibleAlerts += 1;
+            }
+          });
+
+          emptyState.hidden = visible > 0;
+          const label =
+            sev === "critical"
+              ? `${visibleAlerts} ${visibleAlerts === 1 ? "crítico" : "críticos"}`
+              : sev === "alert"
+                ? `${visibleAlerts} ${visibleAlerts === 1 ? "alerta" : "alertas"}`
+                : `${visibleAlerts} ${visibleAlerts === 1 ? "cliente acima" : "clientes acima"} de 70%`;
+          clientsCount.textContent = `— ${label}, ordenados pelo monitor mais crítico`;
+        }
+
+        function refreshCard(card) {
+          const button = card.querySelector("[data-refresh-card]");
+          const last = card.querySelector("[data-card-last]");
+          const next = card.querySelector("[data-card-next]");
+          const isError = card.dataset.severity === "error";
+
+          const pending = cardFetches.get(card);
+          if (pending) window.clearTimeout(pending);
+
+          card.classList.add("is-busy");
+          card.setAttribute("aria-busy", "true");
+          if (button) button.disabled = true;
+          if (last) last.textContent = isError ? "Tentando novamente…" : "Atualizando…";
+          if (next) next.textContent = "—";
+
+          cardFetches.set(
+            card,
+            window.setTimeout(() => {
+              cardFetches.delete(card);
+              card.classList.remove("is-busy");
+              card.removeAttribute("aria-busy");
+              if (button) button.disabled = false;
+              setCardStamps(card, new Date());
+            }, 1100),
+          );
+        }
+
+        // Força a atualização de todos os cards, ignorando o intervalo de cada
+        // conta (automático, próprio ou desligado). Não altera a preferência
+        // salva em cada select — apenas reinicia a contagem a partir de agora.
+        function refreshAllCards() {
+          cards.forEach((card) => {
+            clearCardTimer(card);
+            refreshCard(card);
+          });
+        }
+
+        function clearCardTimer(card) {
+          const timer = cardTimers.get(card);
+          if (timer) window.clearInterval(timer);
+          cardTimers.delete(card);
+        }
+
+        function scheduleCard(card) {
+          clearCardTimer(card);
+          const select = intervalSelect(card);
+          updateIntervalCue(card);
+          if (!select || select.value === "global") return;
+
+          const seconds = Number(select.value);
+          if (!seconds) return;
+          cardTimers.set(
+            card,
+            window.setInterval(() => refreshCard(card), seconds * 1000),
+          );
+        }
+
+        function scheduleGlobalCards() {
+          if (globalTimer) window.clearInterval(globalTimer);
+          globalTimer = null;
+
+          cards.forEach((card) => {
+            if (intervalSelect(card)?.value === "global") updateIntervalCue(card);
+          });
+
+          const seconds = Number(globalInterval.value);
+          if (!seconds) return;
+          globalTimer = window.setInterval(() => {
+            const automaticCards = cards.filter(
+              (card) => intervalSelect(card)?.value === "global",
+            );
+            automaticCards.forEach((card) => refreshCard(card));
+            lastRefresh = new Date();
+            setStamps(lastRefresh);
+          }, seconds * 1000);
+        }
+
+        function scheduleAllCards() {
+          cards.forEach(scheduleCard);
+          scheduleGlobalCards();
+        }
+
+        search.addEventListener("input", applyFilters);
+        severity.addEventListener("change", applyFilters);
+
+        globalInterval.addEventListener("change", () => {
+          setStamps(lastRefresh);
+          cards.forEach((card) => {
+            if (intervalSelect(card)?.value === "global") {
+              setCardStamps(card, cardLastRefreshes.get(card) || new Date());
+            }
+          });
+          scheduleGlobalCards();
+          idleStatus();
+        });
+
+        refreshAll.addEventListener("click", () => {
+          refreshAll.disabled = true;
+          setStatus(`Atualizando ${cards.length} contas — todos os intervalos…`, true);
+          refreshAllCards();
+          window.setTimeout(() => {
+            refreshAll.disabled = false;
+            lastRefresh = new Date();
+            setStamps(lastRefresh);
+            scheduleAllCards();
+            idleStatus();
+          }, 1300);
+        });
+
+        grid.addEventListener("click", (event) => {
+          const button = event.target.closest("[data-refresh-card]");
+          if (!button || button.disabled) return;
+          const card = button.closest(".client-card");
+          if (card) refreshCard(card);
+        });
+
+        grid.addEventListener("change", (event) => {
+          const select = event.target.closest("[data-card-interval]");
+          if (!select) return;
+          const card = select.closest(".client-card");
+          const client = card ? card.dataset.client : "";
+          const value = select.value;
+          setCardStamps(card, cardLastRefreshes.get(card) || new Date());
+          scheduleCard(card);
+          const label =
+            value === "global"
+              ? `automático (${intervalLabel(globalInterval.value) || "desligado"})`
+              : intervalLabel(value) || "atualização desligada";
+          setStatus(`${client}: ${label}.`, false);
+        });
+
+        setStamps(lastRefresh);
+        initializeCardStamps();
+        scheduleAllCards();
+        applyFilters();
+        idleStatus();
+      })();
+    </script>
+  </body>
+</html>

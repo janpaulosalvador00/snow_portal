@@ -16,6 +16,7 @@ type Conn = {
   id: number;
   name: string;
   account_identifier: string;
+  warehouse?: string | null;
   role_name?: string | null;
 };
 
@@ -108,8 +109,17 @@ export function HubPage() {
 
   return (
     <div>
-      <h1>Snow Portal</h1>
-      <p className="muted">Controle de créditos Snowflake para o time de suporte.</p>
+      <div className="hub-page-header">
+        <div>
+          <h1>Snow Portal</h1>
+          <p className="muted">Controle de créditos Snowflake para o time de suporte.</p>
+        </div>
+        {active ? (
+          <span className="cost-context-pill" title="Warehouse da conexão ativa">
+            {active.warehouse?.trim() || "WH auto"}
+          </span>
+        ) : null}
+      </div>
 
       <div className="metrics">
         <div className="metric">

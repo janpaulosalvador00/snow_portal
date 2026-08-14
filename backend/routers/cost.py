@@ -27,10 +27,17 @@ def cost_consumption(
     usage_type: str = Query("Compute"),
     service_type: str | None = Query(None),
     grain: str = Query("day"),
+    start_date: str | None = Query(None, description="YYYY-MM-DD (UTC)"),
+    end_date: str | None = Query(None, description="YYYY-MM-DD (UTC)"),
     user: dict = Depends(get_current_user),
 ):
     creds = _creds(user, connection_id)
     svc = None if not service_type or service_type == "All" else service_type
+    if (start_date and not end_date) or (end_date and not start_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
+        )
     try:
         raw = cost_queries.fetch_consumption_for_creds(
             creds,
@@ -38,8 +45,12 @@ def cost_consumption(
             grain=grain if grain in ("day", "month", "hour") else "day",
             service_type=svc,
             usage_type=usage_type,
+            start_date=start_date,
+            end_date=end_date,
         )
         return cost_queries.consumption_payload(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         detail = friendly_connect_error(exc, auth_method=creds.get("auth_method"))
         raise HTTPException(

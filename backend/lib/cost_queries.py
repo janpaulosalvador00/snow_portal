@@ -36,18 +36,49 @@ def fetch_consumption_for_creds(
     grain: str = "day",
     service_type: str | None = None,
     usage_type: str = "Compute",
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> pd.DataFrame:
     """Consumption with OAuth refresh path via run_query_with_creds."""
+    from datetime import date, datetime, timedelta, timezone
+
     from backend.lib.metering import _consumption_sql
 
     if grain not in ("day", "month", "hour"):
         grain = "day"
-    days = int(days)
-    df = run_query_with_creds(
-        creds,
-        _consumption_sql(grain),
-        (-days, service_type, service_type, None, None),
-    )
+
+    use_absolute = bool(start_date and end_date)
+    if use_absolute:
+        try:
+            start_d = date.fromisoformat(start_date[:10])
+            end_d = date.fromisoformat(end_date[:10])
+        except ValueError as exc:
+            raise ValueError("start_date/end_date devem ser YYYY-MM-DD.") from exc
+        if end_d < start_d:
+            raise ValueError("end_date deve ser >= start_date.")
+        span = (end_d - start_d).days + 1
+        if span > 365:
+            raise ValueError("Intervalo máximo é 365 dias.")
+        # Inclusive end: half-open [start, end+1 day) in UTC
+        start_ts = datetime(start_d.year, start_d.month, start_d.day, tzinfo=timezone.utc)
+        end_exclusive = datetime(
+            end_d.year, end_d.month, end_d.day, tzinfo=timezone.utc
+        ) + timedelta(days=1)
+        sql = _consumption_sql(grain, absolute_range=True)
+        params = (
+            start_ts.isoformat(),
+            end_exclusive.isoformat(),
+            service_type,
+            service_type,
+            None,
+            None,
+        )
+    else:
+        days = int(days)
+        sql = _consumption_sql(grain, absolute_range=False)
+        params = (-days, service_type, service_type, None, None)
+
+    df = run_query_with_creds(creds, sql, params)
     if df.empty:
         return df
     df.columns = [c.lower() for c in df.columns]

@@ -10,9 +10,10 @@ import {
   type CostTab,
 } from "../components/cost/CostChrome";
 import { CreditsTable } from "../components/cost/CreditsTable";
+import { DateRangePicker, type DateRangeValue } from "../components/cost/DateRangePicker";
 import { ErrorBanner } from "../components/cost/ErrorBanner";
 import { FilterPill } from "../components/cost/FilterPill";
-import { MonitorsTable } from "../components/cost/MonitorsTable";
+import { MonitorsPanel } from "../components/cost/MonitorsPanel";
 import { StackedConsumptionChart } from "../components/cost/StackedConsumptionChart";
 
 type Conn = {
@@ -103,10 +104,10 @@ const SERVICE_OPTIONS = [
 export function CostManagementPage() {
   const [connections, setConnections] = useState<Conn[]>([]);
   const [connectionId, setConnectionId] = useState<number | "">(getActiveConnectionId() ?? "");
-  const [days, setDays] = useState(90);
+  const [dateRange, setDateRange] = useState<DateRangeValue>({ mode: "preset", days: 7 });
   const [usageType, setUsageType] = useState("Compute");
-  const [grain, setGrain] = useState("month");
-  const [serviceType, setServiceType] = useState("WAREHOUSE_METERING");
+  const [grain, setGrain] = useState("day");
+  const [serviceType, setServiceType] = useState("All");
   const [resourceFilter, setResourceFilter] = useState("All");
   const [data, setData] = useState<Consumption | null>(null);
   const [overview, setOverview] = useState<AccountOverview | null>(null);
@@ -117,10 +118,6 @@ export function CostManagementPage() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<CostTab>("Consumption");
-  const [monitorSearch, setMonitorSearch] = useState("");
-  const [monitorLevel, setMonitorLevel] = useState("All");
-  const [monitorWh, setMonitorWh] = useState("All");
-  const [monitorFreq, setMonitorFreq] = useState("All");
 
   useEffect(() => {
     void api<Conn[]>("/api/connections").then((list) => {
@@ -149,15 +146,30 @@ export function CostManagementPage() {
     setErr(null);
     const id = Number(connectionId);
     setActiveConnectionId(id);
+    const daysForOther =
+      dateRange.mode === "preset"
+        ? dateRange.days
+        : Math.max(
+            1,
+            Math.ceil(
+              (Date.parse(dateRange.end) - Date.parse(dateRange.start)) / 86400000,
+            ) + 1,
+          );
     const qs = new URLSearchParams({
       connection_id: String(id),
-      days: String(days),
+      days: String(daysForOther),
     });
     try {
       if (tab === "Consumption") {
         qs.set("usage_type", usageType);
         qs.set("grain", grain);
         qs.set("service_type", serviceType);
+        if (dateRange.mode === "custom") {
+          qs.set("start_date", dateRange.start);
+          qs.set("end_date", dateRange.end);
+        } else {
+          qs.set("days", String(dateRange.days));
+        }
         const res = await api<Consumption>(`/api/cost/consumption?${qs}`);
         setData(res);
       } else if (tab === "Account Overview") {
@@ -199,7 +211,7 @@ export function CostManagementPage() {
     }, 400);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, tab, days, usageType, grain, serviceType]);
+  }, [connectionId, tab, dateRange, usageType, grain, serviceType]);
 
   const activeConn = connections.find((c) => c.id === connectionId);
   const contextLabel = activeConn
@@ -241,66 +253,24 @@ export function CostManagementPage() {
     ];
   }, [data]);
 
-  const filteredMonitors = useMemo(() => {
-    const items = monitors?.items || [];
-    return items.filter((m) => {
-      if (monitorSearch && !m.name.toLowerCase().includes(monitorSearch.toLowerCase())) {
-        return false;
-      }
-      if (monitorLevel !== "All" && m.level !== monitorLevel) return false;
-      if (monitorFreq !== "All" && m.frequency !== monitorFreq) return false;
-      if (
-        monitorWh !== "All" &&
-        !(m.warehouses || []).some((w) => w === monitorWh)
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [monitors, monitorSearch, monitorLevel, monitorWh, monitorFreq]);
-
-  const monitorLevels = useMemo(() => {
-    const s = new Set((monitors?.items || []).map((m) => m.level).filter(Boolean));
-    return ["All", ...Array.from(s)];
-  }, [monitors]);
-
-  const monitorFreqs = useMemo(() => {
-    const s = new Set((monitors?.items || []).map((m) => m.frequency).filter(Boolean));
-    return ["All", ...Array.from(s)];
-  }, [monitors]);
-
-  const monitorWarehouses = useMemo(() => {
-    const s = new Set<string>();
-    for (const m of monitors?.items || []) {
-      for (const w of m.warehouses || []) s.add(w);
-    }
-    return ["All", ...Array.from(s).sort()];
-  }, [monitors]);
-
   const noActive = !connectionId;
-  const showTime =
-    tab === "Consumption" ||
+  const days =
+    dateRange.mode === "preset"
+      ? dateRange.days
+      : Math.max(
+          1,
+          Math.ceil(
+            (Date.parse(dateRange.end) - Date.parse(dateRange.start)) / 86400000,
+          ) + 1,
+        );
+  const showTimeNonConsumption =
     tab === "Account Overview" ||
     tab === "Anomalies" ||
     tab === "Organization Overview";
 
   return (
     <div className="cost-page">
-      <CostPageHeader
-        contextLabel={contextLabel}
-        actions={
-          tab === "Resource Monitors" ? (
-            <button
-              type="button"
-              className="btn primary"
-              disabled
-              title="Abra na Snowflake Console"
-            >
-              + Resource Monitor
-            </button>
-          ) : null
-        }
-      />
+      <CostPageHeader contextLabel={contextLabel} />
       <CostTabs tab={tab} onTab={setTab} />
 
       <p className="cost-latency muted">
@@ -316,29 +286,47 @@ export function CostManagementPage() {
       ) : (
         <>
           <div className="cost-filters">
-            <FilterPill
-              label="Account"
-              value={String(connectionId)}
-              onChange={(v) => setConnectionId(Number(v))}
-              options={connections.map((c) => ({
-                value: String(c.id),
-                label: `${c.name} (${c.account_identifier})`,
-              }))}
-            />
-            {showTime ? (
-              <FilterPill
-                label="Time Range"
-                value={String(days)}
-                onChange={(v) => setDays(Number(v))}
-                options={[
-                  { value: "7", label: "Last 7 days" },
-                  { value: "28", label: "Last 28 days" },
-                  { value: "90", label: "Last 3 months" },
-                ]}
-              />
-            ) : null}
             {tab === "Consumption" ? (
               <>
+                <DateRangePicker value={dateRange} onChange={setDateRange} />
+                {activeConn ? (
+                  <span className="account-chip">
+                    <select
+                      className="account-chip-select"
+                      value={String(connectionId)}
+                      onChange={(e) => setConnectionId(Number(e.target.value))}
+                      aria-label="Account"
+                    >
+                      {connections.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.account_identifier.includes("-")
+                            ? c.account_identifier.split("-").slice(-1)[0]
+                            : c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="account-chip-clear"
+                      title="Limpar conta ativa"
+                      aria-label="Limpar conta ativa"
+                      onClick={() => {
+                        setActiveConnectionId(null);
+                        setConnectionId("");
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ) : null}
+                <FilterPill
+                  label="Tags"
+                  value="N/A"
+                  onChange={() => undefined}
+                  options={[{ value: "N/A", label: "All Tags" }]}
+                  disabled
+                />
+                <span className="cost-filter-divider" aria-hidden />
                 <FilterPill
                   label="Usage Type"
                   value={usageType}
@@ -362,7 +350,33 @@ export function CostManagementPage() {
                   options={resourceOptions}
                 />
               </>
-            ) : null}
+            ) : (
+              <>
+                <FilterPill
+                  label="Account"
+                  value={String(connectionId)}
+                  onChange={(v) => setConnectionId(Number(v))}
+                  options={connections.map((c) => ({
+                    value: String(c.id),
+                    label: `${c.name} (${c.account_identifier})`,
+                  }))}
+                />
+                {showTimeNonConsumption ? (
+                  <FilterPill
+                    label="Time Range"
+                    value={String(days)}
+                    onChange={(v) => setDateRange({ mode: "preset", days: Number(v) })}
+                    options={[
+                      { value: "7", label: "Last 7 days" },
+                      { value: "28", label: "Last 28 days" },
+                      { value: "90", label: "Last 3 months" },
+                      { value: "180", label: "Last 6 months" },
+                      { value: "365", label: "Last 12 months" },
+                    ]}
+                  />
+                ) : null}
+              </>
+            )}
             {tab === "Anomalies" ? (
               <>
                 <FilterPill
@@ -388,52 +402,25 @@ export function CostManagementPage() {
                 />
               </>
             ) : null}
-            {tab === "Resource Monitors" ? (
-              <>
-                <label className="filter-pill filter-search">
-                  <span className="filter-pill-label">Search</span>
-                  <input
-                    value={monitorSearch}
-                    onChange={(e) => setMonitorSearch(e.target.value)}
-                    placeholder="Search monitors"
-                    aria-label="Search monitors"
-                  />
-                </label>
-                <FilterPill
-                  label="Level"
-                  value={monitorLevel}
-                  onChange={setMonitorLevel}
-                  options={monitorLevels.map((l) => ({ value: l, label: l }))}
-                />
-                <FilterPill
-                  label="Warehouse"
-                  value={monitorWh}
-                  onChange={setMonitorWh}
-                  options={monitorWarehouses.map((w) => ({ value: w, label: w }))}
-                />
-                <FilterPill
-                  label="Frequency"
-                  value={monitorFreq}
-                  onChange={setMonitorFreq}
-                  options={monitorFreqs.map((f) => ({ value: f, label: f }))}
-                />
-              </>
+            {tab !== "Resource Monitors" ? (
+              <button
+                type="button"
+                className="btn icon-refresh"
+                onClick={() => void load()}
+                disabled={loading}
+                title="Atualizar"
+                aria-label="Atualizar"
+              >
+                ↻
+              </button>
             ) : null}
-            <button
-              type="button"
-              className="btn icon-refresh"
-              onClick={() => void load()}
-              disabled={loading}
-              title="Atualizar"
-              aria-label="Atualizar"
-            >
-              ↻
-            </button>
           </div>
 
           {err ? <ErrorBanner message={err} connectionId={connectionId} /> : null}
 
-          {loading && !err ? <CostSkeleton /> : null}
+          {loading && !err && !(tab === "Resource Monitors" && monitors) ? (
+            <CostSkeleton />
+          ) : null}
 
           {!loading && tab === "Consumption" && data ? (
             <>
@@ -544,15 +531,13 @@ export function CostManagementPage() {
             </>
           ) : null}
 
-          {!loading && tab === "Resource Monitors" && monitors ? (
-            <>
-              {monitors.note ? <div className="info-box">{monitors.note}</div> : null}
-              <div className="monitors-count muted">
-                {filteredMonitors.length} Resource Monitor
-                {filteredMonitors.length === 1 ? "" : "s"}
-              </div>
-              {filteredMonitors.length ? <MonitorsTable items={filteredMonitors} /> : null}
-            </>
+          {tab === "Resource Monitors" && monitors ? (
+            <MonitorsPanel
+              items={monitors.items || []}
+              note={monitors.note}
+              onRefresh={() => void load()}
+              loading={loading}
+            />
           ) : null}
 
           {!loading && tab === "Budgets" && budgets ? (

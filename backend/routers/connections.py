@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.parse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,7 @@ from backend.lib.snowflake_client import (
 from backend.security import get_current_user
 
 router = APIRouter(tags=["connections"])
+logger = logging.getLogger(__name__)
 
 
 def _oauth_result_page(*, title: str, body: str, redirect_url: str, delay_ms: int = 1200) -> HTMLResponse:
@@ -151,7 +153,12 @@ def test_conn(body: ConnectionTest, user: dict = Depends(get_current_user)):
 
 @router.get("/api/connections/{connection_id}/options")
 def connection_options(connection_id: int, user: dict = Depends(get_current_user)):
-    """List live warehouses and roles for a saved connection (ACL-gated)."""
+    """List live warehouses and roles for a saved connection (ACL-gated).
+
+    When the stored warehouse no longer exists on the account, auto-persist the
+    suggested warehouse so Cost Management's pill does not keep a dead name
+    (e.g. COMPUTE_WH) until the user clicks Salvar.
+    """
     if not db.user_can_access_connection(user, connection_id):
         raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
     try:
@@ -162,7 +169,24 @@ def connection_options(connection_id: int, user: dict = Depends(get_current_user
         options = discover_session_options_with_creds(creds)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, **options}
+
+    warehouse_auto_saved: str | None = None
+    if options.get("stored_warehouse_exists") is False:
+        suggested = (options.get("suggested_warehouse") or "").strip()
+        if suggested:
+            try:
+                db.update_connection(connection_id, warehouse=suggested)
+                warehouse_auto_saved = suggested
+                # Reflect healed state for callers (Cost pill / edit form).
+                options["stored_warehouse_exists"] = True
+            except ValueError:
+                warehouse_auto_saved = None
+
+    return {
+        "ok": True,
+        **options,
+        "warehouse_auto_saved": warehouse_auto_saved,
+    }
 
 
 @router.post("/api/connections/discover")
@@ -374,6 +398,7 @@ def oauth_callback(
 
     if error:
         msg = error_description or error
+        logger.warning("oauth_callback error=%s detail=%s", error, msg)
         return _oauth_result_page(
             title="Falha no login Snowflake",
             body=msg,
@@ -383,6 +408,7 @@ def oauth_callback(
 
     if not code or not state:
         msg = "Callback OAuth sem code/state."
+        logger.warning("oauth_callback missing code/state")
         return _oauth_result_page(
             title="Falha no login Snowflake",
             body=msg,
@@ -393,6 +419,7 @@ def oauth_callback(
     pending = oauth_local.pop_oauth_pending(state)
     if not pending:
         msg = "Sessão OAuth expirada ou inválida. Tente Conectar via browser de novo."
+        logger.warning("oauth_callback pending miss state=%s…", state[:8])
         return _oauth_result_page(
             title="Falha no login Snowflake",
             body=msg,
@@ -421,6 +448,11 @@ def oauth_callback(
             role=pending.get("role_name"),
         )
         if not ok:
+            logger.warning(
+                "oauth_callback test_connection failed account=%s: %s",
+                pending["account"],
+                msg[:200],
+            )
             return _oauth_result_page(
                 title="Token obtido, mas conexão falhou",
                 body=msg,
@@ -458,8 +490,15 @@ def oauth_callback(
                 team_id=team_id,
                 acl_team_ids=[team_id] if team_id else [],
             )
+        logger.info(
+            "oauth_callback saved connection_id=%s name=%s account=%s",
+            conn_id,
+            pending.get("name"),
+            pending["account"],
+        )
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
+        logger.exception("oauth_callback finalize failed: %s", msg[:300])
         return _oauth_result_page(
             title="Aguardando retorno — falha ao finalizar",
             body=msg[:400],

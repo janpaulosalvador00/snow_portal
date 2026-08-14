@@ -4,21 +4,20 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import secrets
-import threading
-import time
 import urllib.parse
 from typing import Any
 
 import requests
 
+from backend.lib import db
 from backend.lib.config import get_settings
 from backend.lib.snowflake_client import normalize_account_identifier
 
 CLIENT_ID = "LOCAL_APPLICATION"
-_PENDING: dict[str, dict[str, Any]] = {}
-_LOCK = threading.Lock()
 _PENDING_TTL_SEC = 600
+logger = logging.getLogger(__name__)
 
 
 def _b64url(raw: bytes) -> str:
@@ -52,13 +51,6 @@ def portal_public_url() -> str:
     return settings.get("portal_public_url") or "http://localhost:8501"
 
 
-def _purge_expired() -> None:
-    now = time.time()
-    dead = [k for k, v in _PENDING.items() if now - v.get("created_at", 0) > _PENDING_TTL_SEC]
-    for k in dead:
-        _PENDING.pop(k, None)
-
-
 def create_oauth_pending(
     *,
     portal_user_id: int,
@@ -88,28 +80,34 @@ def create_oauth_pending(
         "code_challenge_method": "S256",
     }
     authorize_url = f"{account_base_url(acct)}/oauth/authorize?{urllib.parse.urlencode(params)}"
-    with _LOCK:
-        _purge_expired()
-        _PENDING[state] = {
-            "created_at": time.time(),
-            "portal_user_id": portal_user_id,
-            "account": acct,
-            "username": username.strip(),
-            "name": (name or "").strip() or acct,
-            "warehouse": warehouse or None,
-            "role_name": role_name or None,
-            "team_id": team_id,
-            "connection_id": connection_id,
-            "code_verifier": verifier,
-            "redirect_uri": redirect_uri,
-        }
+    payload = {
+        "portal_user_id": portal_user_id,
+        "account": acct,
+        "username": username.strip(),
+        "name": (name or "").strip() or acct,
+        "warehouse": warehouse or None,
+        "role_name": role_name or None,
+        "team_id": team_id,
+        "connection_id": connection_id,
+        "code_verifier": verifier,
+        "redirect_uri": redirect_uri,
+    }
+    # Persist in Postgres so docker/api restarts mid-login do not drop the PKCE session.
+    db.put_oauth_pending(state, payload, ttl_sec=_PENDING_TTL_SEC)
+    logger.info(
+        "oauth_pending created state=%s… account=%s name=%s",
+        state[:8],
+        acct,
+        payload["name"],
+    )
     return {"authorize_url": authorize_url, "state": state, "redirect_uri": redirect_uri}
 
 
 def pop_oauth_pending(state: str) -> dict[str, Any] | None:
-    with _LOCK:
-        _purge_expired()
-        return _PENDING.pop(state, None)
+    pending = db.pop_oauth_pending(state, ttl_sec=_PENDING_TTL_SEC)
+    if not pending:
+        logger.warning("oauth_pending missing/expired state=%s…", (state or "")[:8])
+    return pending
 
 
 def exchange_authorization_code(

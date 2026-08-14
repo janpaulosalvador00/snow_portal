@@ -39,6 +39,13 @@ CREATE TABLE IF NOT EXISTS connection_acl (
     PRIMARY KEY (connection_id, team_id)
 );
 
+CREATE TABLE IF NOT EXISTS oauth_pending (
+    state           VARCHAR(128) PRIMARY KEY,
+    payload         JSONB NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_pending_created ON oauth_pending(created_at);
 CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);
 CREATE INDEX IF NOT EXISTS idx_connections_team ON connections(team_id);
 CREATE INDEX IF NOT EXISTS idx_connections_account ON connections(account_identifier);

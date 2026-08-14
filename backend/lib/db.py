@@ -1,6 +1,7 @@
 """Postgres access layer."""
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from typing import Any, Generator, Iterable
 
@@ -84,6 +85,64 @@ def ensure_schema() -> None:
             CHECK (auth_method IN ('local_oauth', 'sso', 'password', 'pat', 'oauth'))
             """
         )
+        # Browser OAuth pending state must survive API restarts (in-memory alone loses mid-login).
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS oauth_pending (
+                state       VARCHAR(128) PRIMARY KEY,
+                payload     JSONB NOT NULL,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_oauth_pending_created
+            ON oauth_pending(created_at)
+            """
+        )
+
+
+def put_oauth_pending(state: str, payload: dict, *, ttl_sec: int = 600) -> None:
+    """Store OAuth PKCE pending row; purge expired first."""
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            "DELETE FROM oauth_pending WHERE created_at < NOW() - (%s || ' seconds')::interval",
+            (str(int(ttl_sec)),),
+        )
+        cur.execute(
+            """
+            INSERT INTO oauth_pending (state, payload, created_at)
+            VALUES (%s, %s::jsonb, NOW())
+            ON CONFLICT (state) DO UPDATE
+            SET payload = EXCLUDED.payload, created_at = NOW()
+            """,
+            (state, json.dumps(payload)),
+        )
+
+
+def pop_oauth_pending(state: str, *, ttl_sec: int = 600) -> dict | None:
+    """Atomically take pending OAuth state if still within TTL."""
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            "DELETE FROM oauth_pending WHERE created_at < NOW() - (%s || ' seconds')::interval",
+            (str(int(ttl_sec)),),
+        )
+        cur.execute(
+            """
+            DELETE FROM oauth_pending
+            WHERE state = %s
+            RETURNING payload
+            """,
+            (state,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        payload = row["payload"]
+        if isinstance(payload, str):
+            return json.loads(payload)
+        return dict(payload)
 
 
 def ensure_bootstrap() -> None:

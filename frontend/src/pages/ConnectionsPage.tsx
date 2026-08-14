@@ -27,6 +27,8 @@ type SessionOptions = {
   roles: string[];
   suggested_warehouse?: string | null;
   stored_warehouse_exists?: boolean | null;
+  /** Set when API auto-persisted a replacement for a missing stored WH. */
+  warehouse_auto_saved?: string | null;
   hint?: string;
 };
 
@@ -65,6 +67,31 @@ const METHOD_LABELS: Record<string, string> = {
   sso: "External Browser (SSO)",
 };
 
+/** Label text for a WH option (name + optional Snowflake state). Value stays name-only. */
+function warehouseOptionLabel(w: Pick<WarehouseOption, "name" | "state">): string {
+  return w.state ? `${w.name} (${w.state})` : w.name;
+}
+
+/**
+ * Header `WH: …` must match the selected <option> label when the edit dropdown is active.
+ * Persist/compare still use the bare warehouse name (`editWarehouse`).
+ */
+function warehouseHeaderLabel(
+  name: string | null | undefined,
+  options: WarehouseOption[] | null | undefined,
+  matchSelectLabel: boolean,
+): string {
+  const trimmed = name?.trim();
+  if (!trimmed) return "(padrão da sessão / vazio)";
+  if (!matchSelectLabel || !options?.length) return trimmed;
+
+  const suggested = options.find((w) => w.suggested && w.name === trimmed);
+  if (suggested) return warehouseOptionLabel(suggested);
+
+  // Same fallback as the edit <select> when saved WH is missing from suggested list
+  return `${trimmed} (atual / não sugerido)`;
+}
+
 export function ConnectionsPage() {
   const { user } = useAuth();
   const secretRef = useRef<HTMLInputElement>(null);
@@ -85,6 +112,10 @@ export function ConnectionsPage() {
   const [editOptionsBusy, setEditOptionsBusy] = useState(false);
   const [editManualWh, setEditManualWh] = useState(false);
   const [editManualRole, setEditManualRole] = useState(false);
+  /** True when options loader replaced a missing/invalid saved WH with a suggested one. */
+  const [editWhAutoReplaced, setEditWhAutoReplaced] = useState(false);
+  /** True when the replacement was persisted automatically (no Salvar needed). */
+  const [editWhAutoSaved, setEditWhAutoSaved] = useState(false);
   const editSecretRef = useRef<HTMLInputElement>(null);
   const [method, setMethod] = useState("browser_oauth");
   const [account, setAccount] = useState("");
@@ -184,6 +215,30 @@ export function ConnectionsPage() {
     setMsg("Conexão inativada. Cost Management exige uma conta ativa.");
   }
 
+  /** Blank Sign in / Nova conexão form — never copy a saved connection. */
+  function resetSigninForm() {
+    setMethod("browser_oauth");
+    setAccount("");
+    setName("");
+    setSfUser("");
+    setSecret("");
+    setWarehouse("");
+    setRoleName("");
+    setSigninOptions(null);
+    setSigninOptionsErr(null);
+    setSigninOptionsBusy(false);
+    setSigninManualWh(false);
+    setSigninManualRole(false);
+    setErr(null);
+    setMsg(null);
+    setEditingId(null);
+  }
+
+  function openNewConnection() {
+    resetSigninForm();
+    setTab("signin");
+  }
+
   function startEdit(c: Conn) {
     setEditingId(c.id);
     setEditName(c.name);
@@ -198,6 +253,8 @@ export function ConnectionsPage() {
     setEditOptionsErr(null);
     setEditManualWh(false);
     setEditManualRole(false);
+    setEditWhAutoReplaced(false);
+    setEditWhAutoSaved(false);
     setErr(null);
     setMsg(null);
     void loadEditOptions(c.id);
@@ -206,6 +263,7 @@ export function ConnectionsPage() {
   async function loadEditOptions(connectionId: number) {
     setEditOptionsBusy(true);
     setEditOptionsErr(null);
+    setEditWhAutoSaved(false);
     try {
       const res = await api<SessionOptions & { ok?: boolean }>(
         `/api/connections/${connectionId}/options`,
@@ -213,9 +271,49 @@ export function ConnectionsPage() {
       setEditOptions(res);
       setEditManualWh(false);
       setEditManualRole(false);
-      // If stored WH does not exist on account, clear toward suggested / empty
-      if (res.stored_warehouse_exists === false) {
-        setEditWarehouse(res.suggested_warehouse || "");
+
+      const autoSaved = (res.warehouse_auto_saved || "").trim();
+      const suggested = (res.suggested_warehouse || "").trim();
+      // API may already have healed; older APIs still return stored_warehouse_exists=false.
+      const needsHeal =
+        Boolean(autoSaved) ||
+        (res.stored_warehouse_exists === false && Boolean(suggested));
+
+      if (needsHeal) {
+        const next = autoSaved || suggested;
+        setEditWarehouse(next);
+        setEditWhAutoReplaced(true);
+
+        if (autoSaved) {
+          setEditWhAutoSaved(true);
+          setMsg(`Warehouse inválido substituído e salvo: ${autoSaved}.`);
+          await reload();
+        } else if (next) {
+          // Fallback: persist suggested WH once so Cost pill never sticks on a dead name.
+          try {
+            await api<{ message: string; connection: Conn }>(
+              `/api/connections/${connectionId}`,
+              {
+                method: "PATCH",
+                body: JSON.stringify({
+                  warehouse: next,
+                  revalidate: false,
+                }),
+              },
+            );
+            setEditWhAutoSaved(true);
+            setMsg(`Warehouse inválido substituído e salvo: ${next}.`);
+            await reload();
+          } catch {
+            setEditWhAutoSaved(false);
+            setMsg(
+              `Warehouse sugerido: ${next}. Clique em Salvar WH / Role para gravar.`,
+            );
+          }
+        }
+      } else {
+        setEditWhAutoReplaced(false);
+        setEditWhAutoSaved(false);
       }
     } catch (e) {
       setEditOptions(null);
@@ -228,6 +326,38 @@ export function ConnectionsPage() {
       setEditManualRole(true);
     } finally {
       setEditOptionsBusy(false);
+    }
+  }
+
+  /** Persist name / WH / role without re-auth (needed for Browser OAuth). */
+  async function saveEditMeta(id: number) {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const res = await api<{ message: string; connection: Conn }>(`/api/connections/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editName.trim() || undefined,
+          account_identifier: editAccount.trim(),
+          username: editUser.trim(),
+          warehouse: editWarehouse,
+          role_name: editRole,
+          clear_warehouse: !editWarehouse.trim(),
+          clear_role: !editRole.trim(),
+          revalidate: false,
+        }),
+      });
+      setEditingId(null);
+      setEditSecret("");
+      setEditWhAutoReplaced(false);
+      setEditWhAutoSaved(false);
+      setMsg(res.message || "Warehouse/role salvos.");
+      await reload();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Falha ao salvar warehouse/role.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -478,7 +608,7 @@ export function ConnectionsPage() {
         <button
           type="button"
           className={tab === "signin" ? "active" : ""}
-          onClick={() => setTab("signin")}
+          onClick={() => openNewConnection()}
         >
           Sign in to Snowflake
         </button>
@@ -486,51 +616,76 @@ export function ConnectionsPage() {
 
       {tab === "hub" ? (
         <div className="stack">
+          <div className="connections-hub-actions">
+            <button type="button" className="btn primary" onClick={() => openNewConnection()}>
+              + Nova conexão
+            </button>
+          </div>
           {!connections.length ? (
             <div className="info-box">
-              Nenhuma conexão ainda. Use <strong>Browser OAuth (como Cortex)</strong> — login no
-              browser, sem PAT.
+              Nenhuma conexão ainda. Clique em <strong>+ Nova conexão</strong> e use{" "}
+              <strong>Browser OAuth (como Cortex)</strong> — login no browser, sem PAT.
             </div>
           ) : (
-            connections.map((c) => {
+            <div className="connections-grid">
+            {connections.map((c) => {
               const isActive = activeId === c.id;
               const isEditing = editingId === c.id;
+              const displayWh = isEditing ? editWarehouse : c.warehouse;
+              const displayRole = isEditing ? editRole : c.role_name;
+              const matchWhSelectLabel =
+                isEditing && !editManualWh && !!editOptions?.warehouses?.length;
               return (
-                <div key={c.id} className="row-card" style={{ flexDirection: "column", alignItems: "stretch" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-                    <div>
-                      <strong>
-                        {c.name}
-                        {isActive ? " · ativa" : ""}
-                      </strong>
-                      <div className="muted">
-                        {c.account_identifier} · {c.username} ·{" "}
-                        {METHOD_LABELS[c.auth_method] || c.auth_method}
-                      </div>
-                      <div className="muted">
-                        WH: {c.warehouse || "(padrão da sessão / vazio)"} · Role:{" "}
-                        {c.role_name || "(padrão)"}
-                      </div>
+                <div
+                  key={c.id}
+                  className={`row-card connection-card${isEditing ? " is-editing" : ""}`}
+                >
+                  <div className="connection-card-meta">
+                    <strong>
+                      {isEditing ? editName || c.name : c.name}
+                      <span
+                        className={
+                          isActive ? "conn-status-active" : "conn-status-inactive"
+                        }
+                      >
+                        {" · "}
+                        {isActive ? "ativa" : "inativo"}
+                      </span>
+                    </strong>
+                    <div className="muted">
+                      {isEditing ? editAccount : c.account_identifier} ·{" "}
+                      {isEditing ? editUser : c.username} ·{" "}
+                      {METHOD_LABELS[isEditing ? editMethod : c.auth_method] ||
+                        (isEditing ? editMethod : c.auth_method)}
                     </div>
-                    <div className="row-actions">
-                      <button type="button" className="btn" onClick={() => startEdit(c)}>
-                        Editar
+                    <div className="muted">
+                      WH:{" "}
+                      {warehouseHeaderLabel(
+                        displayWh,
+                        editOptions?.warehouses,
+                        matchWhSelectLabel,
+                      )}{" "}
+                      · Role: {displayRole?.trim() || "(padrão)"}
+                    </div>
+                  </div>
+                  <div className="row-actions">
+                    <button type="button" className="btn" onClick={() => startEdit(c)}>
+                      Editar
+                    </button>
+                    {isActive ? (
+                      <button type="button" className="btn" onClick={inactivate}>
+                        Inativar
                       </button>
-                      {isActive ? (
-                        <button type="button" className="btn" onClick={inactivate}>
-                          Inativar
-                        </button>
-                      ) : (
-                        <button type="button" className="btn" onClick={() => void activate(c.id)}>
-                          Ativar
-                        </button>
-                      )}
-                      {user?.role === "admin" ? (
-                        <button type="button" className="btn ghost" onClick={() => void remove(c.id)}>
-                          Remover
-                        </button>
-                      ) : null}
-                    </div>
+                    ) : (
+                      <button type="button" className="btn" onClick={() => void activate(c.id)}>
+                        Ativar
+                      </button>
+                    )}
+                    {user?.role === "admin" ? (
+                      <button type="button" className="btn ghost" onClick={() => void remove(c.id)}>
+                        Remover
+                      </button>
+                    ) : null}
                   </div>
                   {isEditing ? (
                     <div className="form-stack" style={{ marginTop: "0.75rem" }}>
@@ -591,22 +746,27 @@ export function ConnectionsPage() {
                         {editManualWh || !editOptions?.warehouses?.length ? (
                           <input
                             value={editWarehouse}
-                            onChange={(e) => setEditWarehouse(e.target.value)}
+                            onChange={(e) => {
+                              setEditWarehouse(e.target.value);
+                              setEditWhAutoReplaced(false);
+                            }}
                             placeholder="WH_CON_EXT ou vazio (auto)"
                             list="edit-wh-suggestions"
                           />
                         ) : (
                           <select
                             value={editWarehouse}
-                            onChange={(e) => setEditWarehouse(e.target.value)}
+                            onChange={(e) => {
+                              setEditWarehouse(e.target.value);
+                              setEditWhAutoReplaced(false);
+                            }}
                           >
                             <option value="">(auto — escolher WH disponível)</option>
                             {editOptions.warehouses
                               .filter((w) => w.suggested)
                               .map((w) => (
                                 <option key={w.name} value={w.name}>
-                                  {w.name}
-                                  {w.state ? ` (${w.state})` : ""}
+                                  {warehouseOptionLabel(w)}
                                 </option>
                               ))}
                             {editWarehouse &&
@@ -614,7 +774,7 @@ export function ConnectionsPage() {
                               (w) => w.suggested && w.name === editWarehouse,
                             ) ? (
                               <option value={editWarehouse}>
-                                {editWarehouse} (atual / não sugerido)
+                                {warehouseHeaderLabel(editWarehouse, editOptions.warehouses, true)}
                               </option>
                             ) : null}
                           </select>
@@ -689,16 +849,45 @@ export function ConnectionsPage() {
                           reset mensal.
                         </p>
                       )}
+                      {editWhAutoReplaced ? (
+                        <div className={editWhAutoSaved ? "success-box" : "warn-box"}>
+                          {editWhAutoSaved ? (
+                            <>
+                              O warehouse salvo não existia mais nesta conta. Foi substituído e
+                              gravado automaticamente como{" "}
+                              <strong>{editWarehouse || "(auto)"}</strong> — Cost Management já
+                              usa este valor.
+                            </>
+                          ) : (
+                            <>
+                              O warehouse salvo na conexão não existe mais nesta conta. A lista
+                              selecionou <strong>{editWarehouse || "(auto)"}</strong> — clique em{" "}
+                              <strong>Salvar WH / Role</strong> para gravar (Cost Management usa o
+                              valor salvo).
+                            </>
+                          )}
+                        </div>
+                      ) : null}
                       <div className="row-actions">
                         {editMethod === "browser_oauth" ? (
-                          <button
-                            type="button"
-                            className="btn primary"
-                            disabled={busy}
-                            onClick={() => void saveEdit(c.id, false)}
-                          >
-                            Reconectar via browser
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="btn primary"
+                              disabled={busy}
+                              onClick={() => void saveEditMeta(c.id)}
+                            >
+                              Salvar WH / Role
+                            </button>
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={busy}
+                              onClick={() => void saveEdit(c.id, false)}
+                            >
+                              Reconectar via browser
+                            </button>
+                          </>
                         ) : (
                           <>
                             <button
@@ -725,6 +914,7 @@ export function ConnectionsPage() {
                           onClick={() => {
                             setEditingId(null);
                             setEditSecret("");
+                            setEditWhAutoReplaced(false);
                           }}
                         >
                           Cancelar
@@ -737,12 +927,14 @@ export function ConnectionsPage() {
                   ) : null}
                 </div>
               );
-            })
+            })}
+            </div>
           )}
         </div>
       ) : (
         <form
           className="form-stack"
+          autoComplete="off"
           onSubmit={(e: FormEvent) => {
             e.preventDefault();
             void submit(false);
@@ -773,7 +965,8 @@ export function ConnectionsPage() {
             <input
               value={account}
               onChange={(e) => setAccount(e.target.value)}
-              placeholder="A8614549778771-PONCETECH_PARTNER"
+              placeholder="ORG-ACCOUNT ou conta.regiao"
+              autoComplete="off"
               required
             />
           </label>
@@ -782,7 +975,8 @@ export function ConnectionsPage() {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="PONCETECH"
+              placeholder="Nome amigável da conta"
+              autoComplete="off"
             />
           </label>
           <label>
@@ -790,7 +984,8 @@ export function ConnectionsPage() {
             <input
               value={sfUser}
               onChange={(e) => setSfUser(e.target.value)}
-              placeholder="JANSALVADOR"
+              placeholder="Usuário Snowflake"
+              autoComplete="username"
               required
             />
           </label>
@@ -826,8 +1021,7 @@ export function ConnectionsPage() {
                     .filter((w) => w.suggested)
                     .map((w) => (
                       <option key={w.name} value={w.name}>
-                        {w.name}
-                        {w.state ? ` (${w.state})` : ""}
+                        {warehouseOptionLabel(w)}
                       </option>
                     ))}
                 </select>

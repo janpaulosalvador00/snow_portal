@@ -1,16 +1,14 @@
-import { useRef, type WheelEvent } from "react";
+import { type WheelEvent } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
 export function AppShell() {
   const { user, logout } = useAuth();
-  const mainRef = useRef<HTMLElement>(null);
 
-  // Wheel over the sidebar must scroll the main pane (otherwise the page feels stuck).
+  // Wheel over the sticky sidebar must scroll the page (otherwise it feels stuck).
   function onSidebarWheel(e: WheelEvent<HTMLElement>) {
-    const main = mainRef.current;
-    if (!main) return;
-    main.scrollTop += e.deltaY;
+    if (e.currentTarget.scrollHeight > e.currentTarget.clientHeight) return;
+    window.scrollBy({ top: e.deltaY, left: 0, behavior: "auto" });
   }
 
   return (
@@ -35,7 +33,7 @@ export function AppShell() {
           Sair
         </button>
       </aside>
-      <main className="main" ref={mainRef}>
+      <main className="main">
         <Outlet />
       </main>
     </div>

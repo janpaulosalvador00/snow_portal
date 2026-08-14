@@ -1,27 +1,110 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, getActiveConnectionId } from "../api/client";
-import { useAuth } from "../auth/AuthContext";
+import {
+  api,
+  ApiError,
+  getActiveConnectionId,
+  isAbortError,
+  setActiveConnectionId,
+} from "../api/client";
+import { CostSkeleton } from "../components/cost/CostChrome";
+import { ErrorBanner } from "../components/cost/ErrorBanner";
+import { MonitorsPanel } from "../components/cost/MonitorsPanel";
+import type { Monitor } from "../components/cost/MonitorsTable";
 
 type Conn = {
   id: number;
   name: string;
   account_identifier: string;
+  role_name?: string | null;
+};
+
+type MonitorsResp = {
+  items: Monitor[];
+  note: string | null;
 };
 
 export function HubPage() {
-  const { user } = useAuth();
   const [connections, setConnections] = useState<Conn[]>([]);
   const [activeId, setActiveId] = useState<number | null>(getActiveConnectionId());
+  const [monitors, setMonitors] = useState<MonitorsResp | null>(null);
+  const [monitorsErr, setMonitorsErr] = useState<string | null>(null);
+  const [monitorsLoading, setMonitorsLoading] = useState(false);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     void api<Conn[]>("/api/connections")
-      .then(setConnections)
+      .then((list) => {
+        setConnections(list);
+        const stored = getActiveConnectionId();
+        if (stored && list.some((c) => c.id === stored)) {
+          setActiveId(stored);
+        } else if (stored && !list.some((c) => c.id === stored)) {
+          setActiveConnectionId(null);
+          setActiveId(null);
+        } else {
+          setActiveId(stored);
+        }
+      })
       .catch(() => setConnections([]));
-    setActiveId(getActiveConnectionId());
   }, []);
 
+  async function loadMonitors(connectionId: number) {
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
+    const { signal } = ac;
+
+    setMonitorsLoading(true);
+    setMonitorsErr(null);
+    try {
+      const res = await api<MonitorsResp>(
+        `/api/cost/resource-monitors?connection_id=${connectionId}`,
+        { signal },
+      );
+      if (signal.aborted) return;
+      setMonitors(res);
+    } catch (e) {
+      if (signal.aborted || isAbortError(e)) return;
+      setMonitors(null);
+      setMonitorsErr(
+        e instanceof ApiError ? e.message : "Falha ao carregar Resource Monitors.",
+      );
+    } finally {
+      if (loadAbortRef.current === ac) setMonitorsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeId == null) {
+      loadAbortRef.current?.abort();
+      loadAbortRef.current = null;
+      setMonitors(null);
+      setMonitorsErr(null);
+      setMonitorsLoading(false);
+      return;
+    }
+    const t = window.setTimeout(() => void loadMonitors(activeId), 150);
+    return () => {
+      window.clearTimeout(t);
+      loadAbortRef.current?.abort();
+    };
+  }, [activeId]);
+
   const active = connections.find((c) => c.id === activeId);
+  const canSelect = connections.length > 1;
+
+  function onSelectActive(value: string) {
+    if (!value) {
+      setActiveConnectionId(null);
+      setActiveId(null);
+      return;
+    }
+    const id = Number(value);
+    if (!Number.isFinite(id) || !connections.some((c) => c.id === id)) return;
+    setActiveConnectionId(id);
+    setActiveId(id);
+  }
 
   return (
     <div>
@@ -34,41 +117,62 @@ export function HubPage() {
           <strong>{connections.length}</strong>
         </div>
         <div className="metric">
-          <span className="muted">Papel</span>
-          <strong>{user?.role}</strong>
+          <span className="muted">Role da conexão</span>
+          <strong>{active?.role_name?.trim() || "—"}</strong>
         </div>
         <div className="metric">
           <span className="muted">Conta ativa</span>
-          <strong>{active ? active.name : "Nenhuma"}</strong>
+          {canSelect ? (
+            <select
+              className="metric-select"
+              value={activeId != null ? String(activeId) : ""}
+              onChange={(e) => onSelectActive(e.target.value)}
+              aria-label="Conta ativa"
+            >
+              {!activeId ? (
+                <option value="">Selecionar…</option>
+              ) : null}
+              {connections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <strong>{active ? active.name : "Nenhuma"}</strong>
+          )}
         </div>
       </div>
 
-      <h2>Próximos passos</h2>
-      <ol>
-        <li>
-          Abra <Link to="/conexoes">Conexões</Link> e use{" "}
-          <strong>Browser OAuth (como Cortex)</strong> ou PAT.
-        </li>
-        <li>
-          <strong>Ative</strong> a conta (ou <strong>Inative</strong> quando não for usar).{" "}
-          <strong>Edite</strong> warehouse/role se Consumption falhar por cota de WH.
-        </li>
-        <li>
-          Vá em <Link to="/cost-management">Cost Management</Link> (Consumption e demais abas).
-        </li>
-      </ol>
+      <section className="hub-monitors" aria-labelledby="hub-monitors-title">
+        <h2 id="hub-monitors-title" className="hub-section-title">
+          Resource Monitors
+        </h2>
 
-      {active ? (
-        <div className="success-box">
-          Conta ativa: <strong>{active.name}</strong> ({active.account_identifier})
-        </div>
-      ) : connections.length ? (
-        <div className="info-box">
-          Nenhuma conta ativa. Selecione <strong>Ativar</strong> em Conexões.
-        </div>
-      ) : (
-        <div className="warn-box">Nenhuma conexão cadastrada ainda.</div>
-      )}
+        {activeId == null ? (
+          <p className="muted hub-monitors-hint">
+            Nenhuma conta ativa. Vá em <Link to="/conexoes">Conexões</Link> e ative uma conta
+            para ver os resource monitors.
+          </p>
+        ) : (
+          <>
+            {monitorsErr ? (
+              <ErrorBanner message={monitorsErr} connectionId={activeId} />
+            ) : null}
+            {monitorsLoading && !monitorsErr && !monitors ? <CostSkeleton /> : null}
+            {monitors ? (
+              <div className={`cost-tab-body${monitorsLoading ? " is-refreshing" : ""}`}>
+                <MonitorsPanel
+                  items={monitors.items || []}
+                  note={monitors.note}
+                  onRefresh={() => void loadMonitors(activeId)}
+                  loading={monitorsLoading}
+                />
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
     </div>
   );
 }

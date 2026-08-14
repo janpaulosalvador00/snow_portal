@@ -249,6 +249,31 @@ select:focus {
   font-size: 1.35rem;
 }
 
+.metric-select {
+  font-size: 1.1rem;
+  font-weight: 600;
+  padding: 0.35rem 0.5rem;
+  margin-top: 0.1rem;
+  width: 100%;
+  max-width: 100%;
+  cursor: pointer;
+}
+
+.hub-monitors {
+  margin-top: 0.5rem;
+  min-width: 0;
+}
+
+.hub-section-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.hub-monitors-hint {
+  margin: 0;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -280,6 +305,62 @@ select:focus {
   border-radius: 10px;
   padding: 0.9rem 1rem;
   background: var(--panel);
+}
+
+.connections-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.connections-hub-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+@media (max-width: 720px) {
+  .connections-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.connection-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.connection-card.is-editing {
+  grid-column: 1 / -1;
+}
+
+.connection-card-meta {
+  min-width: 0;
+}
+
+.connection-card-meta strong,
+.connection-card-meta .muted {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.conn-status-active {
+  color: var(--ok);
+  font-weight: 500;
+}
+
+.conn-status-inactive {
+  color: #a8b0ba;
+  font-weight: 500;
+}
+
+.connection-card > .row-actions {
+  margin-top: 0;
 }
 
 .stack {

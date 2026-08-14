@@ -78,8 +78,9 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 ];
 
 export function MonitorsTable({ items }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<1 | -1>(1);
+  // Highest quota / credits consumption first by default.
+  const [sortKey, setSortKey] = useState<SortKey>("quota_used_pct");
+  const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
   const sorted = useMemo(() => {
     const copy = [...items];
@@ -92,7 +93,8 @@ export function MonitorsTable({ items }: Props) {
       setSortDir((d) => (d === 1 ? -1 : 1));
     } else {
       setSortKey(key);
-      setSortDir(1);
+      // Consumption % is most useful high→low; other columns start ascending.
+      setSortDir(key === "quota_used_pct" ? -1 : 1);
     }
   }
 

@@ -125,18 +125,70 @@ export function CostManagementPage() {
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<CostTab>("Consumption");
   const loadAbortRef = useRef<AbortController | null>(null);
+  const skipConnListRefresh = useRef(true);
 
+  /** Keep warehouse pill in sync with Conexões (saved `connection.warehouse`). */
+  function reloadConnections(opts?: { syncActive?: boolean }) {
+    void api<Conn[]>("/api/connections")
+      .then((list) => {
+        setConnections(list);
+        if (!opts?.syncActive) return;
+        const active = getActiveConnectionId();
+        if (active && list.some((c) => c.id === active)) {
+          setConnectionId(active);
+        } else if (!active) {
+          setConnectionId("");
+        }
+      })
+      .catch(() => {
+        /* keep prior list; cost load surfaces auth/network errors */
+      });
+  }
+
+  // Mount + window focus / tab visible — pick up WH saved in Conexões without stale cache.
   useEffect(() => {
-    void api<Conn[]>("/api/connections").then((list) => {
-      setConnections(list);
-      const active = getActiveConnectionId();
-      if (active && list.some((c) => c.id === active)) {
-        setConnectionId(active);
-      } else if (!active) {
-        setConnectionId("");
-      }
-    });
+    reloadConnections({ syncActive: true });
+    const onFocus = () => reloadConnections();
+    const onVis = () => {
+      if (document.visibilityState === "visible") reloadConnections();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, []);
+
+  // After switching account in the Cost dropdown, refresh list so pill WH matches API.
+  useEffect(() => {
+    if (skipConnListRefresh.current) {
+      skipConnListRefresh.current = false;
+      return;
+    }
+    if (connectionId === "") return;
+    reloadConnections();
+  }, [connectionId]);
+
+  // If stored WH is gone on the account, /options auto-persists the suggested WH —
+  // then refresh the connections list so the header pill updates without visiting Conexões.
+  useEffect(() => {
+    if (!connectionId) return;
+    const id = Number(connectionId);
+    if (!id) return;
+    let cancelled = false;
+    void api<{ warehouse_auto_saved?: string | null }>(`/api/connections/${id}/options`)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.warehouse_auto_saved) reloadConnections();
+      })
+      .catch(() => {
+        /* Cost load surfaces auth/network errors; heal is best-effort */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionId]);
 
   async function load() {
     if (!connectionId) {
@@ -378,7 +430,11 @@ export function CostManagementPage() {
                     <select
                       className="account-chip-select"
                       value={String(connectionId)}
-                      onChange={(e) => setConnectionId(Number(e.target.value))}
+                      onChange={(e) => {
+                        const id = Number(e.target.value);
+                        setConnectionId(id);
+                        setActiveConnectionId(id);
+                      }}
                       aria-label="Account"
                     >
                       {connections.map((c) => (
@@ -439,7 +495,11 @@ export function CostManagementPage() {
                 <FilterPill
                   label="Account"
                   value={String(connectionId)}
-                  onChange={(v) => setConnectionId(Number(v))}
+                  onChange={(v) => {
+                    const id = Number(v);
+                    setConnectionId(id);
+                    setActiveConnectionId(id);
+                  }}
                   options={connections.map((c) => ({
                     value: String(c.id),
                     label: `${c.name} (${c.account_identifier})`,

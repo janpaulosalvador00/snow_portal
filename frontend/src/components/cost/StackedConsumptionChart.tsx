@@ -74,6 +74,24 @@ type TipSnapshot = {
   coordinate?: { x?: number; y?: number };
 };
 
+/** Recharts rebuilds payload/coordinate every render — compare by value to avoid setState loops. */
+function tipsEqual(a: TipSnapshot | null, b: TipSnapshot | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.label !== b.label) return false;
+  if ((a.coordinate?.x ?? null) !== (b.coordinate?.x ?? null)) return false;
+  if ((a.coordinate?.y ?? null) !== (b.coordinate?.y ?? null)) return false;
+  if (a.payload.length !== b.payload.length) return false;
+  for (let i = 0; i < a.payload.length; i++) {
+    const x = a.payload[i];
+    const y = b.payload[i];
+    if (x.name !== y.name || Number(x.value) !== Number(y.value) || x.color !== y.color) {
+      return false;
+    }
+  }
+  return true;
+}
+
 type Props = {
   rows: Record<string, string | number>[];
   resources: string[];
@@ -128,24 +146,33 @@ function ConsumptionTooltip({
     if (active && payload?.length && label) {
       const next: TipSnapshot = {
         label: String(label),
-        payload,
-        coordinate,
+        // Clone so later Recharts renders cannot mutate our frozen snapshot.
+        payload: payload.map((p) => ({
+          name: p.name,
+          value: Number(p.value),
+          color: p.color,
+        })),
+        coordinate: coordinate
+          ? { x: coordinate.x, y: coordinate.y }
+          : undefined,
       };
       const prev = frozenTipRef.current;
-      // Same day: refresh payload/coordinate immediately.
+      // Same day: refresh payload/coordinate immediately (skip if values unchanged).
       if (!prev || prev.label === next.label) {
         if (switchTimerRef.current) {
           clearTimeout(switchTimerRef.current);
           switchTimerRef.current = null;
         }
-        onFrozenTip(next);
+        if (!tipsEqual(prev, next)) onFrozenTip(next);
         return;
       }
       // Different day: sticky delay so a pass toward the scrollbar does not switch.
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
       switchTimerRef.current = setTimeout(() => {
         switchTimerRef.current = null;
-        if (!tipHoveringLocalRef.current) onFrozenTip(next);
+        if (!tipHoveringLocalRef.current && !tipsEqual(frozenTipRef.current, next)) {
+          onFrozenTip(next);
+        }
       }, TIP_SWITCH_STICKY_MS);
       return;
     }
@@ -154,7 +181,7 @@ function ConsumptionTooltip({
         clearTimeout(switchTimerRef.current);
         switchTimerRef.current = null;
       }
-      onFrozenTip(null);
+      if (frozenTipRef.current != null) onFrozenTip(null);
       onPosition(undefined);
     }
   }, [active, label, payload, coordinate, tipHovering, onFrozenTip, onPosition]);
@@ -248,27 +275,27 @@ export function StackedConsumptionChart({ rows, resources, grain, onGrain }: Pro
 
   const handleTipPos = useCallback((pos: { x: number; y: number } | undefined) => {
     setTipPos((prev) => {
-      if (!pos) return undefined;
+      if (!pos) return prev === undefined ? prev : undefined;
       if (prev && prev.x === pos.x && prev.y === pos.y) return prev;
       return pos;
     });
   }, []);
 
   const handleFrozenTip = useCallback((tip: TipSnapshot | null) => {
-    setFrozenTip(tip);
+    setFrozenTip((prev) => (tipsEqual(prev, tip) ? prev : tip));
   }, []);
 
   const handleTipHover = useCallback((hovering: boolean) => {
     tipHoveringRef.current = hovering;
-    setTipHovering(hovering);
+    setTipHovering((prev) => (prev === hovering ? prev : hovering));
     if (!hovering) {
       // Leaving the tooltip: if the chart is no longer hovered, drop the pin.
       // Chart mousemove will re-sync if the cursor is still over a bar.
       const wrap = wrapRef.current;
       const overChart = wrap?.matches(":hover") ?? false;
       if (!overChart) {
-        setFrozenTip(null);
-        setTipPos(undefined);
+        setFrozenTip((prev) => (prev == null ? prev : null));
+        setTipPos((prev) => (prev === undefined ? prev : undefined));
       }
     }
   }, []);

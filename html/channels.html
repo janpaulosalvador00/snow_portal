@@ -1,0 +1,1895 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snow Portal — Canais e comunicação (mockup UX)</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #1a1d21;
+        --panel-2: #15181d;
+        --border: #2a2f36;
+        --text: #e8eaed;
+        --muted: #8b939e;
+        --accent: #29b5e8;
+        --danger: #c45c5c;
+        --ok: #3d9a6a;
+        --warn: #c9a227;
+        --hairline: rgba(232, 234, 237, 0.1);
+        font-family: "IBM Plex Sans", system-ui, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.45;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+      }
+
+      h1,
+      h2,
+      h3 {
+        font-weight: 600;
+        margin: 0 0 0.5rem;
+      }
+
+      .muted {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .mono {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .app-shell {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        min-height: 100dvh;
+        align-items: start;
+      }
+
+      .sidebar {
+        background: #14171c;
+        border-right: 1px solid var(--border);
+        padding: 1.15rem 0.75rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        position: sticky;
+        top: 0;
+        height: 100dvh;
+        overflow-y: auto;
+      }
+
+      .brand {
+        font-weight: 600;
+        font-size: 1.05rem;
+        letter-spacing: -0.02em;
+        padding: 0 0.7rem;
+      }
+
+      .user-meta {
+        font-size: 0.8rem;
+        color: var(--muted);
+        padding: 0 0.7rem;
+        margin-bottom: 0.25rem;
+      }
+
+      .sidebar nav {
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+        flex: 1;
+      }
+
+      .sidebar nav a {
+        position: relative;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 0.9rem;
+        min-height: 38px;
+        padding: 0 0.7rem;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.625rem;
+        width: 100%;
+        transition:
+          background 150ms ease,
+          color 150ms ease;
+      }
+
+      .sidebar nav a:hover {
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+      }
+
+      .sidebar nav a:focus-visible {
+        outline-offset: 1px;
+      }
+
+      .sidebar nav a.active {
+        color: var(--accent);
+        background: linear-gradient(
+          90deg,
+          rgba(41, 181, 232, 0.14),
+          rgba(41, 181, 232, 0.04) 55%,
+          transparent
+        );
+      }
+
+      .sidebar nav a.active::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 2px;
+        height: 18px;
+        border-radius: 999px;
+        background: var(--accent);
+      }
+
+      .nav-icon {
+        flex-shrink: 0;
+        opacity: 0.7;
+        transition: opacity 150ms ease;
+      }
+
+      .sidebar nav a:hover .nav-icon,
+      .sidebar nav a.active .nav-icon {
+        opacity: 1;
+      }
+
+      .nav-badge {
+        margin-left: auto;
+        background: #d0615f;
+        color: #fff;
+        border-radius: 999px;
+        font-size: 0.68rem;
+        font-weight: 600;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 0.35rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+      }
+
+      /* Administração → flyout (Administração + Canais) */
+      .nav-group {
+        position: relative;
+      }
+
+      .nav-group-trigger {
+        position: relative;
+        width: 100%;
+        min-height: 38px;
+        padding: 0 0.7rem;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        cursor: pointer;
+        text-align: left;
+        transition:
+          background 150ms ease,
+          color 150ms ease;
+      }
+
+      .nav-group-trigger:hover,
+      .nav-group:focus-within .nav-group-trigger,
+      .nav-group:hover .nav-group-trigger {
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+      }
+
+      .nav-group-trigger:hover .nav-icon,
+      .nav-group:focus-within .nav-group-trigger .nav-icon,
+      .nav-group:hover .nav-group-trigger .nav-icon,
+      .nav-group-trigger.active .nav-icon,
+      .nav-group.has-active .nav-group-trigger .nav-icon {
+        opacity: 1;
+      }
+
+      .nav-group-trigger.active,
+      .nav-group.has-active .nav-group-trigger {
+        color: var(--accent);
+        background: linear-gradient(
+          90deg,
+          rgba(41, 181, 232, 0.14),
+          rgba(41, 181, 232, 0.04) 55%,
+          transparent
+        );
+      }
+
+      .nav-group-trigger.active::before,
+      .nav-group.has-active .nav-group-trigger::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 2px;
+        height: 18px;
+        border-radius: 999px;
+        background: var(--accent);
+      }
+
+      /* Flyout no hover, sobre o conteúdo. Movido para o body no JS porque a
+         sidebar tem overflow-y e recortaria um menu posicionado ao lado. */
+      .nav-flyout {
+        position: fixed;
+        z-index: 70;
+        min-width: 196px;
+        padding: 0.35rem;
+        background: #1b1f25;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+        display: none;
+        flex-direction: column;
+        gap: 0.125rem;
+      }
+
+      .nav-flyout.is-visible {
+        display: flex;
+      }
+
+      /* ponte invisível: evita fechar ao atravessar o vão entre item e menu */
+      .nav-flyout::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -10px;
+        width: 10px;
+        height: 100%;
+      }
+
+      .nav-flyout a {
+        position: relative;
+        min-height: 34px;
+        padding: 0 0.6rem;
+        border-radius: 8px;
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: transparent;
+        transition:
+          background 150ms ease,
+          color 150ms ease;
+      }
+
+      .nav-flyout a:hover {
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+      }
+
+      .nav-flyout a.active {
+        color: var(--accent);
+        background: rgba(41, 181, 232, 0.1);
+      }
+
+      .logout {
+        margin-top: auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.625rem;
+        width: 100%;
+      }
+
+      .sidebar .logout {
+        min-height: 38px;
+        padding: 0 0.7rem;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        background: #1f242c;
+        color: var(--text);
+        font-size: 0.9rem;
+        transition:
+          background-color 150ms ease,
+          color 150ms ease;
+      }
+
+      .sidebar .logout:hover:not(:disabled) {
+        background: #272d36;
+        color: var(--text);
+      }
+
+      .main {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .overview {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: var(--bg);
+        padding: 1rem 2rem 0;
+      }
+
+      .content-scroll {
+        padding: 1rem 2rem 2rem;
+      }
+
+      .btn {
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        border-radius: 8px;
+        padding: 0.5rem 0.85rem;
+        font: inherit;
+        font-size: 0.85rem;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.4rem;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      .btn:hover:not(:disabled) {
+        background: #1f242c;
+      }
+
+      .btn.primary {
+        background: var(--accent);
+        color: #0b0f14;
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+
+      .btn.primary:hover:not(:disabled) {
+        background: #48c4f2;
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      select,
+      input[type="text"],
+      input[type="url"],
+      input[type="search"] {
+        background: #12151a;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 0.5rem 0.65rem;
+        font: inherit;
+        font-size: 0.85rem;
+        width: 100%;
+      }
+
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--muted);
+      }
+
+      .page-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .page-header-title {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.55rem 0.7rem;
+        min-width: 0;
+        max-width: min(780px, 100%);
+      }
+
+      .page-header h1 {
+        margin: 0;
+        font-size: 1.65rem;
+        line-height: 1.15;
+      }
+
+      .kpis {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin: 1.15rem 0 0;
+      }
+
+      .kpi-divider {
+        height: 1px;
+        margin: 1rem 0.35rem 0;
+        background: var(--hairline);
+        border: 0;
+      }
+
+      .kpi {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-top: 3px solid var(--border);
+        border-radius: 10px;
+        padding: 0.85rem 0.95rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        min-width: 0;
+      }
+
+      .kpi.is-ok {
+        border-top-color: var(--ok);
+      }
+      .kpi.is-attention {
+        border-top-color: var(--accent);
+      }
+      .kpi.is-alert {
+        border-top-color: var(--warn);
+      }
+      .kpi.is-neutral {
+        border-top-color: #6b7280;
+      }
+
+      .kpi-label {
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .kpi-value {
+        display: flex;
+        align-items: baseline;
+        gap: 0.45rem;
+        margin-top: 0.1rem;
+      }
+
+      .kpi-pct {
+        font-size: 1.6rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.1;
+      }
+
+      .kpi-count {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .kpi.is-ok .kpi-pct {
+        color: var(--ok);
+      }
+      .kpi.is-attention .kpi-pct {
+        color: var(--accent);
+      }
+      .kpi.is-alert .kpi-pct {
+        color: var(--warn);
+      }
+      .kpi.is-neutral .kpi-pct {
+        color: var(--text);
+      }
+
+      .admin-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+      }
+
+      .admin-split {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.85rem;
+        align-items: stretch;
+        margin-top: 0.4rem;
+      }
+
+      .admin-split > .panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .admin-split > .panel > .table,
+      .admin-split > .panel > .provider-list {
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0.95rem 1rem 1.1rem;
+        min-width: 0;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        padding-bottom: 0.85rem;
+        margin-bottom: 0.85rem;
+        border-bottom: 1px solid var(--hairline);
+      }
+
+      .panel-head h2 {
+        margin: 0;
+        font-size: 1.05rem;
+      }
+
+      .panel-head-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .filter-select {
+        width: auto;
+        min-width: 140px;
+        background: var(--panel-2);
+        border-radius: 999px;
+        padding: 0.35rem 0.75rem;
+        font-size: 0.82rem;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 80;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.25rem;
+        background: rgba(8, 10, 14, 0.72);
+        backdrop-filter: blur(2px);
+      }
+
+      .modal-backdrop[hidden] {
+        display: none !important;
+      }
+
+      .modal {
+        width: min(520px, 100%);
+        max-height: min(90dvh, 780px);
+        overflow: auto;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+        padding: 1rem 1.1rem 1.15rem;
+      }
+
+      .modal-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding-bottom: 0.85rem;
+        margin-bottom: 0.85rem;
+        border-bottom: 1px solid var(--hairline);
+      }
+
+      .modal-head h2 {
+        margin: 0 0 0.25rem;
+        font-size: 1.15rem;
+      }
+
+      .modal-lead {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .modal-close {
+        padding: 0.35rem;
+        min-width: 32px;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 0.35rem;
+      }
+
+      .modal-actions .btn.primary {
+        margin-top: 0;
+        width: auto;
+      }
+
+      body.modal-open {
+        overflow: hidden;
+      }
+
+      .search-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.15rem 0.7rem;
+        min-height: 32px;
+        width: 210px;
+        max-width: 100%;
+      }
+
+      .search-pill svg {
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+
+      .search-pill input {
+        background: transparent;
+        border: none;
+        color: var(--text);
+        font: inherit;
+        font-size: 0.82rem;
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
+        padding: 0.2rem 0;
+      }
+
+      .search-pill input:focus {
+        outline: none;
+      }
+
+      .table {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        max-height: var(--table-max-h, min(42vh, 420px));
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding-right: 0.25rem;
+        scrollbar-width: thin;
+        scrollbar-color: #3b424b transparent;
+      }
+
+      .table::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      .table::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .table::-webkit-scrollbar-thumb {
+        background: #3b424b;
+        border-radius: 999px;
+        border: 2px solid var(--panel);
+      }
+
+      .channels-table {
+        --table-rows-visible: 5;
+        --table-head-h: 1.8rem;
+        --table-row-h: 2.85rem;
+        --table-max-h: calc(
+          var(--table-head-h) + var(--table-rows-visible) * var(--table-row-h)
+        );
+        min-height: var(--table-max-h);
+      }
+
+      .event-table {
+        --table-max-h: min(32vh, 280px);
+      }
+
+      .table-head,
+      .table-row {
+        display: grid;
+        gap: 0.5rem;
+        align-items: center;
+        padding: 0.65rem 0.35rem;
+      }
+
+      .channels-table .table-head,
+      .channels-table .table-row {
+        grid-template-columns: minmax(0, 1.2fr) 0.9fr minmax(0, 1.1fr) 0.85fr 0.7fr 0.95fr;
+      }
+
+      .event-table .table-head,
+      .event-table .table-row {
+        grid-template-columns: minmax(0, 1.6fr) 0.7fr;
+      }
+
+      .table-head {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: var(--panel);
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+        border-bottom: 1px solid var(--hairline);
+        padding-top: 0;
+      }
+
+      .table-row {
+        border-bottom: 1px solid var(--hairline);
+        font-size: 0.88rem;
+      }
+
+      .table-row:last-child {
+        border-bottom: none;
+      }
+
+      .table-row[hidden] {
+        display: none !important;
+      }
+
+      .table-row[data-editable="true"] {
+        cursor: pointer;
+        transition: background-color 150ms ease;
+      }
+
+      .table-row[data-editable="true"]:hover,
+      .table-row[data-editable="true"]:focus-visible {
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .table-empty {
+        padding: 1.25rem 0.35rem;
+        color: var(--muted);
+        font-size: 0.88rem;
+        text-align: center;
+      }
+
+      .table-empty[hidden] {
+        display: none !important;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        white-space: nowrap;
+        flex-shrink: 0;
+        border: 1px solid transparent;
+      }
+
+      .badge.is-teams {
+        color: #b8e8f8;
+        background: rgba(41, 181, 232, 0.12);
+        border-color: rgba(41, 181, 232, 0.35);
+      }
+
+      .badge.is-slack {
+        color: #e0d5f5;
+        background: rgba(126, 98, 182, 0.16);
+        border-color: rgba(126, 98, 182, 0.4);
+      }
+
+      .badge.is-gchat {
+        color: #d5e8c8;
+        background: rgba(61, 154, 106, 0.14);
+        border-color: rgba(61, 154, 106, 0.4);
+      }
+
+      .badge.is-active {
+        color: #b6e0c8;
+        background: rgba(61, 154, 106, 0.14);
+        border-color: rgba(61, 154, 106, 0.4);
+      }
+
+      .badge.is-paused {
+        color: var(--muted);
+        background: var(--panel-2);
+        border-color: var(--border);
+      }
+
+      .badge.is-fail {
+        color: #f0c0c0;
+        background: rgba(196, 92, 92, 0.14);
+        border-color: rgba(196, 92, 92, 0.45);
+      }
+
+      .badge.is-connected {
+        color: #b6e0c8;
+        background: rgba(61, 154, 106, 0.14);
+        border-color: rgba(61, 154, 106, 0.4);
+      }
+
+      .badge.is-disconnected {
+        color: var(--muted);
+        background: var(--panel-2);
+        border-color: var(--border);
+      }
+
+      .provider-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+        max-height: min(32vh, 280px);
+        overflow-y: auto;
+        padding-right: 0.15rem;
+      }
+
+      .provider-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 0.55rem 0.75rem;
+        align-items: center;
+        padding: 0.75rem 0.8rem;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel-2);
+      }
+
+      .provider-card-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        min-width: 0;
+      }
+
+      .provider-card-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        font-size: 0.92rem;
+        font-weight: 600;
+      }
+
+      .provider-card-sub {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      .provider-card-actions {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .event-checks {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.45rem;
+        padding: 0.35rem 0;
+      }
+
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--text);
+        letter-spacing: 0;
+        text-transform: none;
+        flex-direction: row;
+      }
+
+      .check-row input {
+        width: auto;
+        accent-color: var(--accent);
+      }
+
+      .inline-check {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 0.55rem;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--text);
+        letter-spacing: 0;
+      }
+
+      .inline-check input {
+        width: auto;
+        accent-color: var(--accent);
+      }
+
+      .form-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      .flash {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 90;
+        width: max-content;
+        max-width: min(420px, calc(100vw - 2rem));
+        border-radius: 10px;
+        padding: 0.9rem 1.15rem;
+        font-size: 0.9rem;
+        line-height: 1.35;
+        text-align: center;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+        animation: flash-in 160ms ease-out;
+      }
+
+      @keyframes flash-in {
+        from {
+          opacity: 0;
+          transform: translate(-50%, calc(-50% + 6px));
+        }
+      }
+
+      .flash[hidden] {
+        display: none !important;
+      }
+
+      .flash.is-success {
+        background: #142019;
+        border: 1px solid rgba(61, 154, 106, 0.6);
+        color: #c6ecd6;
+      }
+
+      .flash.is-error {
+        background: #201414;
+        border: 1px solid rgba(196, 92, 92, 0.6);
+        color: #f0c0c0;
+      }
+
+      .note {
+        font-size: 0.78rem;
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .cell-muted {
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .truncate {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      @media (max-width: 860px) {
+        .app-shell {
+          grid-template-columns: 1fr;
+        }
+        .sidebar {
+          position: relative;
+          height: auto;
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+        .overview,
+        .content-scroll {
+          padding-left: 1rem;
+          padding-right: 1rem;
+        }
+        .overview {
+          position: static;
+        }
+        .kpis {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .admin-split {
+          grid-template-columns: 1fr;
+        }
+        .channels-table .table-head,
+        .channels-table .table-row {
+          grid-template-columns: minmax(0, 1.1fr) 0.85fr minmax(0, 1fr) 0.75fr 0.65fr 0.9fr;
+          font-size: 0.8rem;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .kpis {
+          grid-template-columns: 1fr;
+        }
+        .channels-table .table-head {
+          display: none;
+        }
+        .channels-table .table-row {
+          grid-template-columns: 1fr 1fr;
+          gap: 0.35rem 0.75rem;
+          padding: 0.85rem 0.2rem;
+        }
+        .channels-table .table-row span:nth-child(1) {
+          grid-column: 1 / -1;
+          font-weight: 600;
+        }
+        .channels-table {
+          --table-max-h: min(58vh, 420px);
+          min-height: 0;
+        }
+        .search-pill {
+          width: 100%;
+        }
+        .filter-select {
+          width: 100%;
+        }
+        .panel-head {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .provider-card {
+          grid-template-columns: 1fr;
+        }
+        .provider-card-actions {
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">Snow Portal</div>
+        <div class="user-meta">Time: Suporte</div>
+        <nav aria-label="Navegação principal">
+          <a href="#">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 10v10h14V10" />
+              <path d="M10 20v-6h4v6" />
+            </svg>
+            Início
+          </a>
+          <a href="#">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
+            Conexões
+          </a>
+          <a href="#">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 19V5" />
+              <path d="M4 19h16" />
+              <path d="M8 17V10" />
+              <path d="M12 17V7" />
+              <path d="M16 17v-4" />
+            </svg>
+            Cost Management
+          </a>
+          <a href="./alerts.html">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3a6 6 0 0 0-6 6c0 4-2 5-2 5h16s-2-1-2-5a6 6 0 0 0-6-6z" />
+              <path d="M10.5 20a1.8 1.8 0 0 0 3 0" />
+            </svg>
+            Alerts
+            <span class="nav-badge" aria-label="1 cliente exige atenção">1</span>
+          </a>
+          <div class="nav-group has-active" data-nav-group>
+            <button
+              type="button"
+              class="nav-group-trigger active"
+              aria-expanded="false"
+              aria-haspopup="true"
+              aria-controls="admin-flyout"
+              id="admin-nav-trigger"
+            >
+              <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="8" r="3.5" />
+                <path d="M5 20a7 7 0 0 1 14 0" />
+                <path d="M19 4v4" />
+                <path d="M17 6h4" />
+              </svg>
+              Administração
+            </button>
+            <div class="nav-flyout" id="admin-flyout" role="menu" aria-label="Administração">
+              <a href="./admin.html" role="menuitem">
+                <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M5 20a7 7 0 0 1 14 0" />
+                </svg>
+                Administração
+              </a>
+              <a href="./channels.html" class="active" aria-current="page" role="menuitem">
+                <svg class="nav-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                </svg>
+                Canais
+              </a>
+            </div>
+          </div>
+        </nav>
+        <button type="button" class="btn logout">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          Sair
+        </button>
+      </aside>
+
+      <main class="main">
+        <div class="overview">
+          <div class="page-header">
+            <div class="page-header-title">
+              <h1>Canais e comunicação</h1>
+            </div>
+          </div>
+          <div class="kpis" aria-label="Resumo de canais e entregas">
+            <article class="kpi is-ok">
+              <div class="kpi-label">Canais ativos</div>
+              <div class="kpi-value">
+                <span class="kpi-pct" id="kpi-active">0</span>
+                <span class="kpi-count" id="kpi-active-sub">de 0</span>
+              </div>
+            </article>
+            <article class="kpi is-attention">
+              <div class="kpi-label">Provedores conectados</div>
+              <div class="kpi-value">
+                <span class="kpi-pct" id="kpi-providers">0</span>
+                <span class="kpi-count">de 3</span>
+              </div>
+            </article>
+            <article class="kpi is-alert">
+              <div class="kpi-label">Falhas em 24h</div>
+              <div class="kpi-value">
+                <span class="kpi-pct" id="kpi-failures">0</span>
+                <span class="kpi-count">entregas</span>
+              </div>
+            </article>
+            <article class="kpi is-neutral">
+              <div class="kpi-label">Eventos roteados hoje</div>
+              <div class="kpi-value">
+                <span class="kpi-pct" id="kpi-events">0</span>
+                <span class="kpi-count">mensagens</span>
+              </div>
+            </article>
+          </div>
+          <hr class="kpi-divider" aria-hidden="true" />
+        </div>
+
+        <div class="content-scroll">
+          <div id="flash" class="flash" hidden role="status" aria-live="polite"></div>
+
+          <div class="admin-grid">
+            <section class="panel" aria-labelledby="channels-title">
+              <div class="panel-head">
+                <h2 id="channels-title">Canais</h2>
+                <div class="panel-head-actions">
+                  <div class="search-pill">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m20 20-3.5-3.5" />
+                    </svg>
+                    <label class="sr-only" for="channel-search">Buscar canal</label>
+                    <input id="channel-search" type="search" placeholder="Buscar canal…" autocomplete="off" />
+                  </div>
+                  <label class="sr-only" for="provider-filter">Filtrar provedor</label>
+                  <select id="provider-filter" class="filter-select" aria-label="Filtrar provedor">
+                    <option value="all">Todos</option>
+                    <option value="teams">Microsoft Teams</option>
+                    <option value="slack">Slack</option>
+                    <option value="gchat">Google Chat</option>
+                  </select>
+                  <button type="button" class="btn primary" id="btn-open-channel-modal">
+                    + Novo canal
+                  </button>
+                </div>
+              </div>
+              <div class="table channels-table" id="channels-table">
+                <div class="table-head" aria-hidden="true">
+                  <span>Nome</span>
+                  <span>Provedor</span>
+                  <span>Destino</span>
+                  <span>Eventos</span>
+                  <span>Status</span>
+                  <span>Última entrega</span>
+                </div>
+                <div id="channels-body"></div>
+                <div id="channels-empty" class="table-empty" hidden>
+                  Nenhum canal configurado. Conecte Teams, Slack ou Google Chat para receber alertas.
+                </div>
+              </div>
+            </section>
+
+            <div class="admin-split">
+              <section class="panel" aria-labelledby="providers-title">
+                <div class="panel-head">
+                  <h2 id="providers-title">Provedores</h2>
+                </div>
+                <div class="provider-list" id="providers-list"></div>
+              </section>
+
+              <section class="panel" aria-labelledby="events-title">
+                <div class="panel-head">
+                  <h2 id="events-title">Eventos</h2>
+                </div>
+                <div class="table event-table">
+                  <div class="table-head" aria-hidden="true">
+                    <span>Evento</span>
+                    <span>Canais</span>
+                  </div>
+                  <div id="events-body"></div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="channel-modal" hidden role="presentation">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="channel-modal-title"
+        aria-describedby="channel-modal-lead"
+      >
+        <div class="modal-head">
+          <div>
+            <h2 id="channel-modal-title">Novo canal</h2>
+            <p class="modal-lead" id="channel-modal-lead">
+              Conecte um webhook e escolha quais alertas devem ser enviados.
+            </p>
+          </div>
+          <button type="button" class="btn modal-close" id="btn-close-channel-modal" aria-label="Fechar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+        </div>
+        <form class="form-stack" id="form-channel">
+          <label>
+            Provedor
+            <select id="channel-provider" name="provider" required>
+              <option value="teams">Microsoft Teams</option>
+              <option value="slack">Slack</option>
+              <option value="gchat">Google Chat</option>
+            </select>
+          </label>
+          <label>
+            Nome do canal
+            <input id="channel-name" type="text" name="name" required autocomplete="off" placeholder="Ex.: FinOps crítico" />
+          </label>
+          <label>
+            Webhook URL
+            <input
+              id="channel-webhook"
+              class="mono"
+              type="url"
+              name="webhook"
+              required
+              autocomplete="off"
+              placeholder="https://…"
+            />
+          </label>
+          <p class="note" id="webhook-hint">Cole a URL do Incoming Webhook do canal no Teams.</p>
+          <fieldset style="border: 0; padding: 0; margin: 0">
+            <legend class="sr-only">Eventos</legend>
+            <div class="muted" style="font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em; margin-bottom: 0.35rem">
+              Eventos
+            </div>
+            <div class="event-checks" id="event-checks"></div>
+          </fieldset>
+          <label>
+            Time responsável
+            <select id="channel-team" name="team">
+              <option value="Suporte">Suporte</option>
+              <option value="FinOps">FinOps</option>
+              <option value="Data">Data</option>
+            </select>
+          </label>
+          <label class="inline-check">
+            <input id="channel-active" type="checkbox" name="active" checked />
+            Canal ativo
+          </label>
+          <div class="modal-actions">
+            <button type="button" class="btn" id="btn-cancel-channel-modal">Cancelar</button>
+            <button type="button" class="btn" id="btn-test-channel">Enviar teste</button>
+            <button type="submit" class="btn primary" id="btn-save-channel">Salvar canal</button>
+          </div>
+          <p class="note">Mockup local — não grava no backend.</p>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      const PROVIDERS = {
+        teams: { id: "teams", label: "Microsoft Teams", short: "Teams", badge: "is-teams" },
+        slack: { id: "slack", label: "Slack", short: "Slack", badge: "is-slack" },
+        gchat: { id: "gchat", label: "Google Chat", short: "Google Chat", badge: "is-gchat" },
+      };
+
+      const EVENT_CATALOG = [
+        { id: "critical", label: "Crítico (≥90%)" },
+        { id: "alert", label: "Alerta (70–89,9%)" },
+        { id: "monitor", label: "Monitor esgotado" },
+        { id: "budget", label: "Orçamento excedido" },
+        { id: "inactive", label: "Conexão inativa" },
+      ];
+
+      const WEBHOOK_HINTS = {
+        teams: "Cole a URL do Incoming Webhook do canal no Teams.",
+        slack: "Cole a URL do Incoming Webhook do app no Slack.",
+        gchat: "Cole a URL do webhook do espaço no Google Chat.",
+      };
+
+      const state = {
+        nextId: 4,
+        failures24h: 1,
+        eventsToday: 18,
+        channels: [
+          {
+            id: 1,
+            name: "FinOps crítico",
+            provider: "teams",
+            destination: "#finops-alertas",
+            webhook: "https://outlook.office.com/webhook/abc…xyz",
+            events: ["critical", "monitor", "budget"],
+            team: "FinOps",
+            status: "active",
+            lastDelivery: "Hoje, 14:22",
+            lastOk: true,
+          },
+          {
+            id: 2,
+            name: "Ops geral",
+            provider: "slack",
+            destination: "#snow-ops",
+            webhook: "https://hooks.slack.com/services/T…/B…/xxx",
+            events: ["critical", "alert", "inactive"],
+            team: "Suporte",
+            status: "active",
+            lastDelivery: "Hoje, 11:05",
+            lastOk: true,
+          },
+          {
+            id: 3,
+            name: "Arquitetura",
+            provider: "gchat",
+            destination: "Espaço Arquitetura",
+            webhook: "https://chat.googleapis.com/v1/spaces/…/messages",
+            events: ["critical"],
+            team: "Data",
+            status: "paused",
+            lastDelivery: "Ontem, 18:40",
+            lastOk: false,
+          },
+        ],
+      };
+
+      const els = {
+        body: document.getElementById("channels-body"),
+        empty: document.getElementById("channels-empty"),
+        search: document.getElementById("channel-search"),
+        filter: document.getElementById("provider-filter"),
+        providers: document.getElementById("providers-list"),
+        eventsBody: document.getElementById("events-body"),
+        eventChecks: document.getElementById("event-checks"),
+        flash: document.getElementById("flash"),
+        modal: document.getElementById("channel-modal"),
+        form: document.getElementById("form-channel"),
+        provider: document.getElementById("channel-provider"),
+        name: document.getElementById("channel-name"),
+        webhook: document.getElementById("channel-webhook"),
+        webhookHint: document.getElementById("webhook-hint"),
+        team: document.getElementById("channel-team"),
+        active: document.getElementById("channel-active"),
+        title: document.getElementById("channel-modal-title"),
+        lead: document.getElementById("channel-modal-lead"),
+        btnOpen: document.getElementById("btn-open-channel-modal"),
+        btnClose: document.getElementById("btn-close-channel-modal"),
+        btnCancel: document.getElementById("btn-cancel-channel-modal"),
+        btnTest: document.getElementById("btn-test-channel"),
+        btnSave: document.getElementById("btn-save-channel"),
+        kpiActive: document.getElementById("kpi-active"),
+        kpiActiveSub: document.getElementById("kpi-active-sub"),
+        kpiProviders: document.getElementById("kpi-providers"),
+        kpiFailures: document.getElementById("kpi-failures"),
+        kpiEvents: document.getElementById("kpi-events"),
+      };
+
+      let lastFocus = null;
+      let editingId = null;
+      let flashTimer = null;
+
+      function providerLabel(id) {
+        return PROVIDERS[id]?.label || id;
+      }
+
+      function providerBadgeClass(id) {
+        return PROVIDERS[id]?.badge || "is-paused";
+      }
+
+      function statusMeta(status) {
+        if (status === "active") return { label: "Ativo", cls: "is-active" };
+        if (status === "fail") return { label: "Falha", cls: "is-fail" };
+        return { label: "Pausado", cls: "is-paused" };
+      }
+
+      function maskWebhook(url) {
+        if (!url) return "—";
+        if (url.length <= 28) return url;
+        return `${url.slice(0, 22)}…${url.slice(-6)}`;
+      }
+
+      function destinationFromWebhook(provider, name) {
+        if (provider === "teams") return `#${name.toLowerCase().replace(/\s+/g, "-")}`;
+        if (provider === "slack") return `#${name.toLowerCase().replace(/\s+/g, "-")}`;
+        return `Espaço ${name}`;
+      }
+
+      function showFlash(message, type) {
+        clearTimeout(flashTimer);
+        els.flash.textContent = message;
+        els.flash.className = `flash is-${type}`;
+        els.flash.hidden = false;
+        flashTimer = setTimeout(() => {
+          els.flash.hidden = true;
+        }, 2600);
+      }
+
+      function selectedEvents() {
+        return Array.from(els.eventChecks.querySelectorAll('input[type="checkbox"]:checked')).map(
+          (el) => el.value
+        );
+      }
+
+      function renderEventChecks(selected) {
+        const set = new Set(selected || EVENT_CATALOG.map((e) => e.id));
+        els.eventChecks.innerHTML = EVENT_CATALOG.map(
+          (ev) => `
+          <label class="check-row">
+            <input type="checkbox" value="${ev.id}" ${set.has(ev.id) ? "checked" : ""} />
+            ${ev.label}
+          </label>`
+        ).join("");
+      }
+
+      function filteredChannels() {
+        const q = els.search.value.trim().toLocaleLowerCase("pt-BR");
+        const provider = els.filter.value;
+        return state.channels.filter((ch) => {
+          if (provider !== "all" && ch.provider !== provider) return false;
+          if (!q) return true;
+          const hay = [
+            ch.name,
+            providerLabel(ch.provider),
+            ch.destination,
+            ch.team,
+            statusMeta(ch.status).label,
+            ...ch.events.map((id) => EVENT_CATALOG.find((e) => e.id === id)?.label || id),
+          ]
+            .join(" ")
+            .toLocaleLowerCase("pt-BR");
+          return hay.includes(q);
+        });
+      }
+
+      function renderChannels() {
+        const rows = filteredChannels();
+        const hasAny = state.channels.length > 0;
+        const hasVisible = rows.length > 0;
+
+        els.body.innerHTML = rows
+          .map((ch) => {
+            const st = statusMeta(ch.status);
+            const eventsLabel =
+              ch.events.length === EVENT_CATALOG.length
+                ? "Todos"
+                : `${ch.events.length} eventos`;
+            return `
+            <div
+              class="table-row"
+              data-editable="true"
+              data-id="${ch.id}"
+              tabindex="0"
+              role="button"
+              aria-label="Editar canal ${ch.name}"
+            >
+              <span class="truncate">${ch.name}</span>
+              <span><span class="badge ${providerBadgeClass(ch.provider)}">${providerLabel(ch.provider)}</span></span>
+              <span class="truncate cell-muted">${ch.destination}</span>
+              <span class="cell-muted">${eventsLabel}</span>
+              <span><span class="badge ${st.cls}">${st.label}</span></span>
+              <span class="cell-muted">${ch.lastDelivery}</span>
+            </div>`;
+          })
+          .join("");
+
+        if (!hasAny) {
+          els.empty.hidden = false;
+          els.empty.textContent =
+            "Nenhum canal configurado. Conecte Teams, Slack ou Google Chat para receber alertas.";
+        } else if (!hasVisible) {
+          els.empty.hidden = false;
+          els.empty.textContent = "Nenhum canal encontrado.";
+        } else {
+          els.empty.hidden = true;
+        }
+
+        els.body.querySelectorAll(".table-row").forEach((row) => {
+          const open = () => openEditModal(Number(row.dataset.id));
+          row.addEventListener("click", open);
+          row.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              open();
+            }
+          });
+        });
+      }
+
+      function renderProviders() {
+        els.providers.innerHTML = Object.values(PROVIDERS)
+          .map((p) => {
+            const count = state.channels.filter((c) => c.provider === p.id).length;
+            const connected = count > 0;
+            return `
+            <article class="provider-card" data-provider="${p.id}">
+              <div class="provider-card-meta">
+                <div class="provider-card-title">
+                  ${p.label}
+                  <span class="badge ${connected ? "is-connected" : "is-disconnected"}">
+                    ${connected ? "Conectado" : "Não configurado"}
+                  </span>
+                </div>
+                <div class="provider-card-sub">
+                  ${count} canal${count === 1 ? "" : "is"}
+                </div>
+              </div>
+              <div class="provider-card-actions">
+                <button type="button" class="btn" data-action="connect">${connected ? "Novo" : "Conectar"}</button>
+                <button type="button" class="btn" data-action="test" ${connected ? "" : "disabled"}>Testar</button>
+              </div>
+            </article>`;
+          })
+          .join("");
+
+        els.providers.querySelectorAll(".provider-card").forEach((card) => {
+          const provider = card.dataset.provider;
+          card.querySelector('[data-action="connect"]').addEventListener("click", () => {
+            openCreateModal(provider);
+          });
+          card.querySelector('[data-action="test"]').addEventListener("click", () => {
+            const first = state.channels.find((c) => c.provider === provider && c.status === "active")
+              || state.channels.find((c) => c.provider === provider);
+            if (!first) return;
+            simulateTest(first, true);
+          });
+        });
+      }
+
+      function renderEventsCatalog() {
+        els.eventsBody.innerHTML = EVENT_CATALOG.map((ev) => {
+          const count = state.channels.filter((c) => c.events.includes(ev.id)).length;
+          return `
+            <div class="table-row">
+              <span>${ev.label}</span>
+              <span class="cell-muted">${count}</span>
+            </div>`;
+        }).join("");
+      }
+
+      function renderKpis() {
+        const total = state.channels.length;
+        const active = state.channels.filter((c) => c.status === "active").length;
+        const providers = new Set(state.channels.map((c) => c.provider)).size;
+        els.kpiActive.textContent = String(active);
+        els.kpiActiveSub.textContent = `de ${total}`;
+        els.kpiProviders.textContent = String(providers);
+        els.kpiFailures.textContent = String(state.failures24h);
+        els.kpiEvents.textContent = String(state.eventsToday);
+      }
+
+      function renderAll() {
+        renderChannels();
+        renderProviders();
+        renderEventsCatalog();
+        renderKpis();
+      }
+
+      function openCreateModal(provider) {
+        editingId = null;
+        lastFocus = document.activeElement;
+        els.title.textContent = "Novo canal";
+        els.lead.textContent = "Conecte um webhook e escolha quais alertas devem ser enviados.";
+        els.btnSave.textContent = "Salvar canal";
+        els.form.reset();
+        els.provider.value = provider || "teams";
+        els.active.checked = true;
+        els.webhook.required = true;
+        els.webhook.placeholder = "https://…";
+        renderEventChecks(["critical", "alert"]);
+        updateWebhookHint();
+        els.modal.hidden = false;
+        document.body.classList.add("modal-open");
+        els.provider.focus();
+      }
+
+      function openEditModal(id) {
+        const ch = state.channels.find((c) => c.id === id);
+        if (!ch) return;
+        editingId = id;
+        lastFocus = document.activeElement;
+        els.title.textContent = "Editar canal";
+        els.lead.textContent = "Atualize destino, eventos e status do canal.";
+        els.btnSave.textContent = "Salvar";
+        els.provider.value = ch.provider;
+        els.name.value = ch.name;
+        els.webhook.value = "";
+        els.webhook.required = false;
+        els.webhook.placeholder = maskWebhook(ch.webhook);
+        els.team.value = ch.team;
+        els.active.checked = ch.status === "active";
+        renderEventChecks(ch.events);
+        updateWebhookHint();
+        els.modal.hidden = false;
+        document.body.classList.add("modal-open");
+        els.name.focus();
+      }
+
+      function closeModal(opts = {}) {
+        const restoreFocus = opts.restoreFocus !== false;
+        els.modal.hidden = true;
+        document.body.classList.remove("modal-open");
+        if (restoreFocus && lastFocus && typeof lastFocus.focus === "function") lastFocus.focus();
+      }
+
+      function updateWebhookHint() {
+        els.webhookHint.textContent = WEBHOOK_HINTS[els.provider.value] || "";
+      }
+
+      function nowLabel() {
+        const d = new Date();
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        return `Hoje, ${hh}:${mm}`;
+      }
+
+      function simulateTest(channel, fromProviderPanel) {
+        const fail = /fail|erro|invalid/i.test(channel.webhook) || channel.name.toLowerCase().includes("falha");
+        els.btnTest.disabled = true;
+        els.btnTest.textContent = "Testando…";
+        setTimeout(() => {
+          els.btnTest.disabled = false;
+          els.btnTest.textContent = "Enviar teste";
+          channel.lastDelivery = nowLabel();
+          if (fail) {
+            channel.status = "fail";
+            channel.lastOk = false;
+            state.failures24h += 1;
+            showFlash(
+              `Falha ao enviar teste para ${channel.name}. Verifique a URL do webhook.`,
+              "error"
+            );
+          } else {
+            if (channel.status !== "paused") channel.status = "active";
+            channel.lastOk = true;
+            state.eventsToday += 1;
+            showFlash(`Mensagem de teste enviada para ${channel.name}.`, "success");
+          }
+          renderAll();
+          if (fromProviderPanel) return;
+        }, 650);
+      }
+
+      els.btnOpen.addEventListener("click", () => openCreateModal());
+      els.btnClose.addEventListener("click", () => closeModal());
+      els.btnCancel.addEventListener("click", () => closeModal());
+      els.provider.addEventListener("change", updateWebhookHint);
+      els.search.addEventListener("input", renderChannels);
+      els.filter.addEventListener("change", renderChannels);
+
+      els.modal.addEventListener("click", (e) => {
+        if (e.target === els.modal) closeModal();
+      });
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !els.modal.hidden) closeModal();
+      });
+
+      els.btnTest.addEventListener("click", () => {
+        if (editingId) {
+          const ch = state.channels.find((c) => c.id === editingId);
+          if (!ch) return;
+          const draftWebhook = els.webhook.value.trim();
+          if (draftWebhook) ch.webhook = draftWebhook;
+          simulateTest(ch, false);
+          return;
+        }
+        const name = els.name.value.trim() || "Novo canal";
+        const draft = {
+          id: -1,
+          name,
+          provider: els.provider.value,
+          destination: destinationFromWebhook(els.provider.value, name),
+          webhook: els.webhook.value.trim() || "https://example.invalid/fail",
+          events: selectedEvents(),
+          team: els.team.value,
+          status: els.active.checked ? "active" : "paused",
+          lastDelivery: "—",
+          lastOk: true,
+        };
+        simulateTest(draft, false);
+      });
+
+      els.form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const name = els.name.value.trim();
+        if (!name) return;
+        const events = selectedEvents();
+        if (!events.length) {
+          showFlash("Selecione ao menos um evento.", "error");
+          return;
+        }
+
+        if (editingId) {
+          const ch = state.channels.find((c) => c.id === editingId);
+          if (!ch) return;
+          ch.name = name;
+          ch.provider = els.provider.value;
+          ch.team = els.team.value;
+          ch.events = events;
+          ch.status = els.active.checked ? (ch.status === "fail" ? "fail" : "active") : "paused";
+          if (els.active.checked && ch.status === "fail") ch.status = "active";
+          const webhook = els.webhook.value.trim();
+          if (webhook) {
+            ch.webhook = webhook;
+            ch.destination = destinationFromWebhook(ch.provider, name);
+          } else if (!ch.destination) {
+            ch.destination = destinationFromWebhook(ch.provider, name);
+          }
+          closeModal();
+          renderAll();
+          showFlash(`Canal ${ch.name} atualizado.`, "success");
+          return;
+        }
+
+        const webhook = els.webhook.value.trim();
+        if (!webhook) {
+          showFlash("Informe a URL do webhook.", "error");
+          return;
+        }
+
+        const channel = {
+          id: state.nextId++,
+          name,
+          provider: els.provider.value,
+          destination: destinationFromWebhook(els.provider.value, name),
+          webhook,
+          events,
+          team: els.team.value,
+          status: els.active.checked ? "active" : "paused",
+          lastDelivery: "—",
+          lastOk: true,
+        };
+        state.channels.unshift(channel);
+        closeModal();
+        renderAll();
+        showFlash(`Canal ${channel.name} criado.`, "success");
+      });
+
+      renderEventChecks(["critical", "alert"]);
+      updateWebhookHint();
+      renderAll();
+
+      // Submenu Administração: flyout no hover, aberto sobre o conteúdo
+      (function setupAdminNavGroup() {
+        const group = document.querySelector("[data-nav-group]");
+        const trigger = document.getElementById("admin-nav-trigger");
+        const flyout = document.getElementById("admin-flyout");
+        if (!group || !trigger || !flyout) return;
+
+        document.body.appendChild(flyout);
+
+        let closeTimer = null;
+
+        function place() {
+          const rect = trigger.getBoundingClientRect();
+          flyout.style.top = `${Math.round(rect.top)}px`;
+          flyout.style.left = `${Math.round(rect.right + 8)}px`;
+        }
+
+        function open() {
+          window.clearTimeout(closeTimer);
+          place();
+          flyout.classList.add("is-visible");
+          trigger.setAttribute("aria-expanded", "true");
+        }
+
+        function close() {
+          flyout.classList.remove("is-visible");
+          trigger.setAttribute("aria-expanded", "false");
+        }
+
+        function scheduleClose() {
+          window.clearTimeout(closeTimer);
+          closeTimer = window.setTimeout(close, 140);
+        }
+
+        group.addEventListener("mouseenter", open);
+        group.addEventListener("mouseleave", scheduleClose);
+        flyout.addEventListener("mouseenter", () => window.clearTimeout(closeTimer));
+        flyout.addEventListener("mouseleave", scheduleClose);
+
+        trigger.addEventListener("focus", open);
+        trigger.addEventListener("click", open);
+        flyout.addEventListener("focusout", (e) => {
+          if (!flyout.contains(e.relatedTarget) && e.relatedTarget !== trigger) close();
+        });
+
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && flyout.classList.contains("is-visible")) {
+            close();
+            trigger.focus();
+          }
+        });
+
+        window.addEventListener("resize", () => {
+          if (flyout.classList.contains("is-visible")) place();
+        });
+        window.addEventListener(
+          "scroll",
+          () => {
+            if (flyout.classList.contains("is-visible")) place();
+          },
+          true
+        );
+      })();
+    </script>
+  </body>
+</html>

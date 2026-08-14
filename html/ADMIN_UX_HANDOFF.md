@@ -13,7 +13,7 @@ Modernizar a tela **Administração** no mesmo shell visual do Alerts, com gest�
 
 ## Estrutura da tela
 
-1. **Sidebar** — mesmo AppShell do Alerts; item **Administração** ativo (degradê suave + barra 2px); só `Time: Suporte`.
+1. **Sidebar** — mesmo AppShell do Alerts; item **Administração** ativo (degradê suave + barra 2px); só `Time: Suporte`. Hover/foco/clique abre flyout com **Administração** e **Canais** (→ `channels.html`).
 2. **Header** — `Administração — Gerencie usuários, times e papéis do portal` + meta `N usuários · M times`.
 3. **KPIs** (somente leitura): Usuários ativos, Admins, Suporte, Times.
 4. **Painel Usuários** — largura total; tabela + **Buscar usuário…** + **Novo usuário**.

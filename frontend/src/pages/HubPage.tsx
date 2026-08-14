@@ -25,7 +25,7 @@ export function HubPage() {
 
   return (
     <div>
-      <h1>snow_portal</h1>
+      <h1>Snow Portal</h1>
       <p className="muted">Controle de créditos Snowflake para o time de suporte.</p>
 
       <div className="metrics">

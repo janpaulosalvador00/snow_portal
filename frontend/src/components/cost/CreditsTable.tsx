@@ -10,7 +10,10 @@ type Props = {
 };
 
 export function CreditsTable({ rows }: Props) {
-  const max = rows[0]?.credits_used || 1;
+  if (!rows.length) {
+    return <div className="info-box">Nenhum recurso no filtro atual.</div>;
+  }
+  const max = Math.max(...rows.map((r) => r.credits_used), 1);
   return (
     <div className="table cost-table cost-table-credits">
       <div className="table-head">
@@ -21,9 +24,15 @@ export function CreditsTable({ rows }: Props) {
       </div>
       {rows.map((row) => (
         <div key={row.name + row.type} className="table-row">
-          <span className="mono">{row.name}</span>
-          <span>{row.type}</span>
-          <span className="muted">{row.tags || "—"}</span>
+          <span className="mono credits-name" title={row.name}>
+            {row.name}
+          </span>
+          <span className="credits-type" title={row.type}>
+            {row.type}
+          </span>
+          <span className="muted credits-tags" title={row.tags || undefined}>
+            {row.tags || "—"}
+          </span>
           <span className="credits-cell">
             <span
               className="bar"

@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, ApiError, getActiveConnectionId, setActiveConnectionId } from "../api/client";
+import {
+  api,
+  ApiError,
+  getActiveConnectionId,
+  isAbortError,
+  setActiveConnectionId,
+} from "../api/client";
 import { AnomalyLineChart } from "../components/cost/AnomalyLineChart";
 import {
   CostPageHeader,
@@ -107,7 +113,7 @@ export function CostManagementPage() {
   const [dateRange, setDateRange] = useState<DateRangeValue>({ mode: "preset", days: 7 });
   const [usageType, setUsageType] = useState("Compute");
   const [grain, setGrain] = useState("day");
-  const [serviceType, setServiceType] = useState("All");
+  const [serviceType, setServiceType] = useState("WAREHOUSE_METERING");
   const [resourceFilter, setResourceFilter] = useState("All");
   const [data, setData] = useState<Consumption | null>(null);
   const [overview, setOverview] = useState<AccountOverview | null>(null);
@@ -118,6 +124,7 @@ export function CostManagementPage() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<CostTab>("Consumption");
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     void api<Conn[]>("/api/connections").then((list) => {
@@ -133,6 +140,8 @@ export function CostManagementPage() {
 
   async function load() {
     if (!connectionId) {
+      loadAbortRef.current?.abort();
+      loadAbortRef.current = null;
       setErr(null);
       setData(null);
       setOverview(null);
@@ -140,57 +149,88 @@ export function CostManagementPage() {
       setMonitors(null);
       setBudgets(null);
       setOrg(null);
+      setLoading(false);
       return;
     }
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
+    const { signal } = ac;
+
     setLoading(true);
     setErr(null);
     const id = Number(connectionId);
     setActiveConnectionId(id);
-    const daysForOther =
-      dateRange.mode === "preset"
-        ? dateRange.days
-        : Math.max(
-            1,
-            Math.ceil(
-              (Date.parse(dateRange.end) - Date.parse(dateRange.start)) / 86400000,
-            ) + 1,
-          );
+
+    // Absolute UTC window for every tab so presets match custom and never clamp silently.
+    let startIso: string;
+    let endIso: string;
+    let spanDays: number;
+    if (dateRange.mode === "custom") {
+      startIso = dateRange.start;
+      endIso = dateRange.end;
+      spanDays = Math.max(
+        1,
+        Math.ceil((Date.parse(endIso) - Date.parse(startIso)) / 86400000) + 1,
+      );
+    } else {
+      const end = new Date();
+      const start = new Date();
+      start.setUTCDate(start.getUTCDate() - (dateRange.days - 1));
+      const toIso = (d: Date) => d.toISOString().slice(0, 10);
+      startIso = toIso(start);
+      endIso = toIso(end);
+      spanDays = dateRange.days;
+    }
+
     const qs = new URLSearchParams({
       connection_id: String(id),
-      days: String(daysForOther),
+      days: String(spanDays),
+      start_date: startIso,
+      end_date: endIso,
     });
     try {
       if (tab === "Consumption") {
         qs.set("usage_type", usageType);
-        qs.set("grain", grain);
+        // Always fetch day grain; By Month aggregates client-side from the same series.
+        qs.set("grain", "day");
         qs.set("service_type", serviceType);
-        if (dateRange.mode === "custom") {
-          qs.set("start_date", dateRange.start);
-          qs.set("end_date", dateRange.end);
-        } else {
-          qs.set("days", String(dateRange.days));
-        }
-        const res = await api<Consumption>(`/api/cost/consumption?${qs}`);
+        // Resources filter is client-side on the last response (no re-fetch needed).
+        const res = await api<Consumption>(`/api/cost/consumption?${qs}`, { signal });
+        if (signal.aborted) return;
         setData(res);
       } else if (tab === "Account Overview") {
-        const res = await api<AccountOverview>(`/api/cost/account-overview?${qs}`);
+        const res = await api<AccountOverview>(`/api/cost/account-overview?${qs}`, {
+          signal,
+        });
+        if (signal.aborted) return;
         setOverview(res);
       } else if (tab === "Anomalies") {
-        const res = await api<AnomaliesResp>(`/api/cost/anomalies?${qs}`);
+        const res = await api<AnomaliesResp>(`/api/cost/anomalies?${qs}`, { signal });
+        if (signal.aborted) return;
         setAnom(res);
       } else if (tab === "Resource Monitors") {
         const res = await api<MonitorsResp>(
           `/api/cost/resource-monitors?connection_id=${id}`,
+          { signal },
         );
+        if (signal.aborted) return;
         setMonitors(res);
       } else if (tab === "Budgets") {
-        const res = await api<BudgetsResp>(`/api/cost/budgets?connection_id=${id}`);
+        const res = await api<BudgetsResp>(`/api/cost/budgets?connection_id=${id}`, {
+          signal,
+        });
+        if (signal.aborted) return;
         setBudgets(res);
       } else if (tab === "Organization Overview") {
-        const res = await api<OrgResp>(`/api/cost/organization-overview?${qs}`);
+        const res = await api<OrgResp>(`/api/cost/organization-overview?${qs}`, {
+          signal,
+        });
+        if (signal.aborted) return;
         setOrg(res);
       }
     } catch (e) {
+      if (signal.aborted || isAbortError(e)) return;
       setData(null);
       setOverview(null);
       setAnom(null);
@@ -199,31 +239,57 @@ export function CostManagementPage() {
       setOrg(null);
       setErr(e instanceof ApiError ? e.message : "Falha ao carregar Cost Management.");
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
   }
 
-  // Auto-reload with debounce when filters/tab/connection change
+  // Load on tab/connection and whenever filters that hit the API change.
+  // Resources / By Day|Month still adjust the last response client-side.
   useEffect(() => {
-    if (!connectionId) return;
-    const t = window.setTimeout(() => {
-      void load();
-    }, 400);
-    return () => window.clearTimeout(t);
+    const t = window.setTimeout(() => void load(), 200);
+    return () => {
+      window.clearTimeout(t);
+      loadAbortRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, tab, dateRange, usageType, grain, serviceType]);
+  }, [connectionId, tab, dateRange, usageType, serviceType]);
+
+  // Changing Service Type invalidates resource picks from other service types.
+  useEffect(() => {
+    setResourceFilter("All");
+  }, [serviceType]);
 
   const activeConn = connections.find((c) => c.id === connectionId);
-  const contextLabel = activeConn
-    ? [activeConn.warehouse || activeConn.role_name || activeConn.name].filter(Boolean).join(" · ")
+  const hasTabData =
+    (tab === "Consumption" && !!data) ||
+    (tab === "Account Overview" && !!overview) ||
+    (tab === "Anomalies" && !!anom) ||
+    (tab === "Resource Monitors" && !!monitors) ||
+    (tab === "Budgets" && !!budgets) ||
+    (tab === "Organization Overview" && !!org);
+  // Pill = warehouse saved on the connection only (never role / fake COMPUTE_WH).
+  const warehousePill = activeConn
+    ? activeConn.warehouse?.trim() || "WH auto"
     : null;
 
+  // Table + KPI + chart share one filtered resource set from the last API response.
+  const summaryRows = useMemo(() => {
+    if (!data?.summary?.length) return [];
+    if (resourceFilter === "All") return data.summary;
+    return data.summary.filter((r) => r.name === resourceFilter);
+  }, [data, resourceFilter]);
+
+  const allowedResources = useMemo(
+    () => new Set(summaryRows.map((r) => r.name)),
+    [summaryRows],
+  );
+
   const chartData = useMemo(() => {
-    if (!data?.chart?.length) return null;
+    if (!data?.chart?.length || allowedResources.size === 0) return null;
     const byPeriod: Record<string, Record<string, number | string>> = {};
     const resources = new Set<string>();
     for (const row of data.chart) {
-      if (resourceFilter !== "All" && row.resource_name !== resourceFilter) continue;
+      if (!allowedResources.has(row.resource_name)) continue;
       const key =
         grain === "month" ? row.period_start.slice(0, 7) : row.period_start.slice(0, 10);
       resources.add(row.resource_name);
@@ -237,13 +303,7 @@ export function CostManagementPage() {
       ),
       resources: Array.from(resources),
     };
-  }, [data, grain, resourceFilter]);
-
-  const summaryRows = useMemo(() => {
-    if (!data?.summary) return [];
-    if (resourceFilter === "All") return data.summary;
-    return data.summary.filter((r) => r.name === resourceFilter);
-  }, [data, resourceFilter]);
+  }, [data, grain, allowedResources]);
 
   const resourceOptions = useMemo(() => {
     const names = data?.summary?.map((r) => r.name) || [];
@@ -252,6 +312,14 @@ export function CostManagementPage() {
       ...names.map((n) => ({ value: n, label: n })),
     ];
   }, [data]);
+
+  // Drop stale Resources selection after a refresh that no longer includes it.
+  useEffect(() => {
+    if (resourceFilter === "All" || !data?.summary) return;
+    if (!data.summary.some((r) => r.name === resourceFilter)) {
+      setResourceFilter("All");
+    }
+  }, [data, resourceFilter]);
 
   const noActive = !connectionId;
   const days =
@@ -268,10 +336,19 @@ export function CostManagementPage() {
     tab === "Anomalies" ||
     tab === "Organization Overview";
 
+  const headerCreditsUsed =
+    tab === "Consumption" && data
+      ? summaryRows.reduce((a, r) => a + r.credits_used, 0)
+      : tab === "Account Overview" && overview
+        ? overview.total_credits
+        : null;
+
   return (
     <div className="cost-page">
-      <CostPageHeader contextLabel={contextLabel} />
-      <CostTabs tab={tab} onTab={setTab} />
+      <div className="cost-sticky-nav">
+        <CostPageHeader contextLabel={warehousePill} creditsUsed={headerCreditsUsed} />
+        <CostTabs tab={tab} onTab={setTab} />
+      </div>
 
       <p className="cost-latency muted">
         Dados de ACCOUNT_USAGE / ORGANIZATION_USAGE podem ter atraso. Sem conta ativa, ative em{" "}
@@ -418,18 +495,10 @@ export function CostManagementPage() {
 
           {err ? <ErrorBanner message={err} connectionId={connectionId} /> : null}
 
-          {loading && !err && !(tab === "Resource Monitors" && monitors) ? (
-            <CostSkeleton />
-          ) : null}
+          {loading && !err && !hasTabData ? <CostSkeleton /> : null}
 
-          {!loading && tab === "Consumption" && data ? (
-            <>
-              <div className="kpi cost-kpi">
-                {summaryRows
-                  .reduce((a, r) => a + r.credits_used, 0)
-                  .toFixed(1)}{" "}
-                <span className="kpi-suffix">credits used</span>
-              </div>
+          {tab === "Consumption" && data ? (
+            <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               {chartData?.rows.length ? (
                 <StackedConsumptionChart
                   rows={chartData.rows}
@@ -441,12 +510,12 @@ export function CostManagementPage() {
                 <div className="info-box">Nenhum consumo no período.</div>
               )}
               <CreditsTable rows={summaryRows} />
-            </>
+            </div>
           ) : null}
 
-          {!loading && tab === "Account Overview" && overview ? (
-            <>
-              <div className="metrics">
+          {tab === "Account Overview" && overview ? (
+            <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
+              <div className="metrics cost-metrics">
                 <div className="metric">
                   <span className="muted">Credits ({overview.days}d)</span>
                   <strong>{overview.total_credits.toFixed(1)}</strong>
@@ -462,7 +531,7 @@ export function CostManagementPage() {
                 <div className="info-box">{overview.storage_note}</div>
               ) : null}
               <div className="chart-wrap cost-chart">
-                <ResponsiveContainer width="100%" height={280}>
+                <ResponsiveContainer width="100%" height={320}>
                   <BarChart
                     data={overview.by_service.map((r) => ({
                       name: r.label,
@@ -494,11 +563,11 @@ export function CostManagementPage() {
                   </div>
                 ))}
               </div>
-            </>
+            </div>
           ) : null}
 
-          {!loading && tab === "Anomalies" && anom ? (
-            <>
+          {tab === "Anomalies" && anom ? (
+            <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               {anom.note ? <div className="info-box">{anom.note}</div> : null}
               {anom.series && anom.series.length ? (
                 <AnomalyLineChart series={anom.series} />
@@ -528,20 +597,22 @@ export function CostManagementPage() {
                   ))}
                 </div>
               ) : null}
-            </>
+            </div>
           ) : null}
 
           {tab === "Resource Monitors" && monitors ? (
-            <MonitorsPanel
-              items={monitors.items || []}
-              note={monitors.note}
-              onRefresh={() => void load()}
-              loading={loading}
-            />
+            <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
+              <MonitorsPanel
+                items={monitors.items || []}
+                note={monitors.note}
+                onRefresh={() => void load()}
+                loading={loading}
+              />
+            </div>
           ) : null}
 
-          {!loading && tab === "Budgets" && budgets ? (
-            <>
+          {tab === "Budgets" && budgets ? (
+            <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               {budgets.note ? <div className="info-box">{budgets.note}</div> : null}
               {budgets.items.length ? (
                 <div className="table cost-table">
@@ -559,14 +630,14 @@ export function CostManagementPage() {
               ) : !budgets.note ? (
                 <div className="info-box">Nenhum budget configurado nesta conta.</div>
               ) : null}
-            </>
+            </div>
           ) : null}
 
-          {!loading && tab === "Organization Overview" && org ? (
-            <>
+          {tab === "Organization Overview" && org ? (
+            <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               {org.note ? <div className="info-box">{org.note}</div> : null}
               {org.items.length ? (
-                <div className="table cost-table">
+                <div className="table cost-table cost-table-org">
                   <div className="table-head">
                     <span>DATE</span>
                     <span>ACCOUNT</span>
@@ -581,7 +652,7 @@ export function CostManagementPage() {
                   ))}
                 </div>
               ) : null}
-            </>
+            </div>
           ) : null}
         </>
       )}

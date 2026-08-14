@@ -31,7 +31,7 @@ export function LoginPage() {
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={onSubmit}>
-        <h1>snow_portal</h1>
+        <h1>Snow Portal</h1>
         <p className="muted">Entre com seu usuário do time</p>
         <label>
           Usuário

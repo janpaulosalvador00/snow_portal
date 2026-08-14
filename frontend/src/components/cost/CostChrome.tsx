@@ -41,16 +41,29 @@ export function CostTabs({ tab, onTab }: Pick<Props, "tab" | "onTab">) {
 
 export function CostPageHeader({
   contextLabel,
+  creditsUsed,
   actions,
 }: {
   contextLabel?: string | null;
+  /** When set, shows e.g. "16.0 credits used" before the warehouse pill. */
+  creditsUsed?: number | null;
   actions?: ReactNode;
 }) {
   return (
     <div className="cost-page-header">
       <h1>Cost Management</h1>
       <div className="cost-page-header-right">
-        {contextLabel ? <span className="cost-context-pill">{contextLabel}</span> : null}
+        {creditsUsed != null && Number.isFinite(creditsUsed) ? (
+          <div className="cost-header-kpi" aria-live="polite">
+            <strong>{creditsUsed.toFixed(1)}</strong>
+            <span className="kpi-suffix"> credits used</span>
+          </div>
+        ) : null}
+        {contextLabel ? (
+          <span className="cost-context-pill" title="Warehouse da conexão ativa">
+            {contextLabel}
+          </span>
+        ) : null}
         {actions}
       </div>
     </div>

@@ -1,21 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, ApiError, getActiveConnectionId, setActiveConnectionId } from "../api/client";
+import { AnomalyLineChart } from "../components/cost/AnomalyLineChart";
+import {
+  CostPageHeader,
+  CostSkeleton,
+  CostTabs,
+  type CostTab,
+} from "../components/cost/CostChrome";
+import { CreditsTable } from "../components/cost/CreditsTable";
+import { ErrorBanner } from "../components/cost/ErrorBanner";
+import { FilterPill } from "../components/cost/FilterPill";
+import { MonitorsTable } from "../components/cost/MonitorsTable";
+import { StackedConsumptionChart } from "../components/cost/StackedConsumptionChart";
 
 type Conn = {
   id: number;
   name: string;
   account_identifier: string;
+  warehouse?: string | null;
+  role_name?: string | null;
 };
 
 type Consumption = {
@@ -33,6 +38,20 @@ type AccountOverview = {
 };
 
 type AnomaliesResp = {
+  series?: {
+    date: string;
+    credits: number;
+    expected_low: number;
+    expected_high: number;
+    is_anomaly: boolean;
+  }[];
+  anomalies?: {
+    date: string;
+    credits: number;
+    expected_low: number;
+    expected_high: number;
+    delta: number;
+  }[];
   items: {
     resource_name: string;
     latest_credits: number;
@@ -50,8 +69,11 @@ type MonitorsResp = {
     credit_quota: number | null;
     used_credits: number | null;
     remaining_credits: number | null;
+    quota_used_pct: number | null;
     level: string;
     frequency: string;
+    warehouses: string[];
+    start_time: string | null;
   }[];
   note: string | null;
 };
@@ -67,24 +89,25 @@ type OrgResp = {
   note: string | null;
 };
 
-const TABS = [
-  "Organization Overview",
-  "Account Overview",
-  "Consumption",
-  "Anomalies",
-  "Budgets",
-  "Resource Monitors",
-] as const;
-
-type Tab = (typeof TABS)[number];
+const SERVICE_OPTIONS = [
+  { value: "All", label: "All" },
+  { value: "WAREHOUSE_METERING", label: "Warehouse" },
+  { value: "AI_SERVICES", label: "AI Services" },
+  { value: "AI_INFERENCE", label: "AI Inference" },
+  { value: "SNOWPARK_CONTAINER_SERVICES", label: "Snowpark Container" },
+  { value: "AUTO_CLUSTERING", label: "Auto Clustering" },
+  { value: "PIPE", label: "Snowpipe" },
+  { value: "SERVERLESS_TASK", label: "Serverless Task" },
+];
 
 export function CostManagementPage() {
   const [connections, setConnections] = useState<Conn[]>([]);
   const [connectionId, setConnectionId] = useState<number | "">(getActiveConnectionId() ?? "");
-  const [days, setDays] = useState(28);
+  const [days, setDays] = useState(90);
   const [usageType, setUsageType] = useState("Compute");
-  const [grain, setGrain] = useState("day");
-  const [serviceType, setServiceType] = useState("All");
+  const [grain, setGrain] = useState("month");
+  const [serviceType, setServiceType] = useState("WAREHOUSE_METERING");
+  const [resourceFilter, setResourceFilter] = useState("All");
   const [data, setData] = useState<Consumption | null>(null);
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [anom, setAnom] = useState<AnomaliesResp | null>(null);
@@ -93,7 +116,11 @@ export function CostManagementPage() {
   const [org, setOrg] = useState<OrgResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<Tab>("Consumption");
+  const [tab, setTab] = useState<CostTab>("Consumption");
+  const [monitorSearch, setMonitorSearch] = useState("");
+  const [monitorLevel, setMonitorLevel] = useState("All");
+  const [monitorWh, setMonitorWh] = useState("All");
+  const [monitorFreq, setMonitorFreq] = useState("All");
 
   useEffect(() => {
     void api<Conn[]>("/api/connections").then((list) => {
@@ -164,196 +191,273 @@ export function CostManagementPage() {
     }
   }
 
+  // Auto-reload with debounce when filters/tab/connection change
   useEffect(() => {
-    if (connectionId) void load();
+    if (!connectionId) return;
+    const t = window.setTimeout(() => {
+      void load();
+    }, 400);
+    return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, tab]);
+  }, [connectionId, tab, days, usageType, grain, serviceType]);
+
+  const activeConn = connections.find((c) => c.id === connectionId);
+  const contextLabel = activeConn
+    ? [activeConn.warehouse || activeConn.role_name || activeConn.name].filter(Boolean).join(" · ")
+    : null;
 
   const chartData = useMemo(() => {
     if (!data?.chart?.length) return null;
     const byPeriod: Record<string, Record<string, number | string>> = {};
     const resources = new Set<string>();
     for (const row of data.chart) {
-      const key = row.period_start.slice(0, 10);
+      if (resourceFilter !== "All" && row.resource_name !== resourceFilter) continue;
+      const key =
+        grain === "month" ? row.period_start.slice(0, 7) : row.period_start.slice(0, 10);
       resources.add(row.resource_name);
       if (!byPeriod[key]) byPeriod[key] = { period: key };
       byPeriod[key][row.resource_name] =
         Number(byPeriod[key][row.resource_name] || 0) + row.credits;
     }
     return {
-      rows: Object.values(byPeriod),
+      rows: Object.values(byPeriod).sort((a, b) =>
+        String(a.period).localeCompare(String(b.period)),
+      ),
       resources: Array.from(resources),
     };
+  }, [data, grain, resourceFilter]);
+
+  const summaryRows = useMemo(() => {
+    if (!data?.summary) return [];
+    if (resourceFilter === "All") return data.summary;
+    return data.summary.filter((r) => r.name === resourceFilter);
+  }, [data, resourceFilter]);
+
+  const resourceOptions = useMemo(() => {
+    const names = data?.summary?.map((r) => r.name) || [];
+    return [
+      { value: "All", label: "All Resources" },
+      ...names.map((n) => ({ value: n, label: n })),
+    ];
   }, [data]);
 
-  const maxCredits = data?.summary?.[0]?.credits_used || 1;
+  const filteredMonitors = useMemo(() => {
+    const items = monitors?.items || [];
+    return items.filter((m) => {
+      if (monitorSearch && !m.name.toLowerCase().includes(monitorSearch.toLowerCase())) {
+        return false;
+      }
+      if (monitorLevel !== "All" && m.level !== monitorLevel) return false;
+      if (monitorFreq !== "All" && m.frequency !== monitorFreq) return false;
+      if (
+        monitorWh !== "All" &&
+        !(m.warehouses || []).some((w) => w === monitorWh)
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [monitors, monitorSearch, monitorLevel, monitorWh, monitorFreq]);
+
+  const monitorLevels = useMemo(() => {
+    const s = new Set((monitors?.items || []).map((m) => m.level).filter(Boolean));
+    return ["All", ...Array.from(s)];
+  }, [monitors]);
+
+  const monitorFreqs = useMemo(() => {
+    const s = new Set((monitors?.items || []).map((m) => m.frequency).filter(Boolean));
+    return ["All", ...Array.from(s)];
+  }, [monitors]);
+
+  const monitorWarehouses = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of monitors?.items || []) {
+      for (const w of m.warehouses || []) s.add(w);
+    }
+    return ["All", ...Array.from(s).sort()];
+  }, [monitors]);
+
   const noActive = !connectionId;
+  const showTime =
+    tab === "Consumption" ||
+    tab === "Account Overview" ||
+    tab === "Anomalies" ||
+    tab === "Organization Overview";
 
   return (
-    <div>
-      <h1>Cost Management</h1>
-      <div className="tabs">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            className={tab === t ? "active" : ""}
-            onClick={() => setTab(t)}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
+    <div className="cost-page">
+      <CostPageHeader
+        contextLabel={contextLabel}
+        actions={
+          tab === "Resource Monitors" ? (
+            <button
+              type="button"
+              className="btn primary"
+              disabled
+              title="Abra na Snowflake Console"
+            >
+              + Resource Monitor
+            </button>
+          ) : null
+        }
+      />
+      <CostTabs tab={tab} onTab={setTab} />
 
-      <div className="banner">
+      <p className="cost-latency muted">
         Dados de ACCOUNT_USAGE / ORGANIZATION_USAGE podem ter atraso. Sem conta ativa, ative em{" "}
         <Link to="/conexoes">Conexões</Link>.
-      </div>
+      </p>
 
       {noActive ? (
         <div className="warn-box">
           Nenhuma conta ativa. Vá em <Link to="/conexoes">Conexões</Link>, ative uma conta e, se
-          necessário, <strong>Edite</strong> warehouse/role (deixe WH vazio se estiver bloqueado por
-          resource monitor).
+          necessário, <strong>Edite</strong> warehouse/role.
         </div>
       ) : (
         <>
-          <div className="filters">
-            <label>
-              Account
-              <select
-                value={connectionId}
-                onChange={(e) => setConnectionId(Number(e.target.value))}
-              >
-                {connections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.account_identifier})
-                  </option>
-                ))}
-              </select>
-            </label>
-            {(tab === "Consumption" ||
-              tab === "Account Overview" ||
-              tab === "Anomalies" ||
-              tab === "Organization Overview") && (
-              <label>
-                Time Range
-                <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
-                  <option value={7}>Last 7 days</option>
-                  <option value={28}>Last 28 days</option>
-                  <option value={90}>Last 90 days</option>
-                </select>
-              </label>
-            )}
+          <div className="cost-filters">
+            <FilterPill
+              label="Account"
+              value={String(connectionId)}
+              onChange={(v) => setConnectionId(Number(v))}
+              options={connections.map((c) => ({
+                value: String(c.id),
+                label: `${c.name} (${c.account_identifier})`,
+              }))}
+            />
+            {showTime ? (
+              <FilterPill
+                label="Time Range"
+                value={String(days)}
+                onChange={(v) => setDays(Number(v))}
+                options={[
+                  { value: "7", label: "Last 7 days" },
+                  { value: "28", label: "Last 28 days" },
+                  { value: "90", label: "Last 3 months" },
+                ]}
+              />
+            ) : null}
             {tab === "Consumption" ? (
               <>
-                <label>
-                  Usage Type
-                  <select value={usageType} onChange={(e) => setUsageType(e.target.value)}>
-                    <option>All</option>
-                    <option>Compute</option>
-                    <option>Cloud Services</option>
-                  </select>
-                </label>
-                <label>
-                  By
-                  <select value={grain} onChange={(e) => setGrain(e.target.value)}>
-                    <option value="day">Day</option>
-                    <option value="month">Month</option>
-                  </select>
-                </label>
-                <label>
-                  Service Type
-                  <select value={serviceType} onChange={(e) => setServiceType(e.target.value)}>
-                    <option>All</option>
-                    <option>WAREHOUSE_METERING</option>
-                    <option>AI_SERVICES</option>
-                    <option>AI_INFERENCE</option>
-                    <option>SNOWPARK_CONTAINER_SERVICES</option>
-                    <option>AUTO_CLUSTERING</option>
-                    <option>PIPE</option>
-                    <option>SERVERLESS_TASK</option>
-                  </select>
-                </label>
+                <FilterPill
+                  label="Usage Type"
+                  value={usageType}
+                  onChange={setUsageType}
+                  options={[
+                    { value: "All", label: "All" },
+                    { value: "Compute", label: "Compute" },
+                    { value: "Cloud Services", label: "Cloud Services" },
+                  ]}
+                />
+                <FilterPill
+                  label="Service Type"
+                  value={serviceType}
+                  onChange={setServiceType}
+                  options={SERVICE_OPTIONS}
+                />
+                <FilterPill
+                  label="Resources"
+                  value={resourceFilter}
+                  onChange={setResourceFilter}
+                  options={resourceOptions}
+                />
               </>
             ) : null}
-            <button type="button" className="btn primary" onClick={() => void load()} disabled={loading}>
-              {loading ? "Atualizando…" : "Atualizar"}
+            {tab === "Anomalies" ? (
+              <>
+                <FilterPill
+                  label="Monitors"
+                  value="N/A"
+                  onChange={() => undefined}
+                  options={[{ value: "N/A", label: "N/A" }]}
+                  disabled
+                />
+                <FilterPill
+                  label="Tags"
+                  value="N/A"
+                  onChange={() => undefined}
+                  options={[{ value: "N/A", label: "N/A" }]}
+                  disabled
+                />
+                <FilterPill
+                  label="Service types"
+                  value="N/A"
+                  onChange={() => undefined}
+                  options={[{ value: "N/A", label: "N/A" }]}
+                  disabled
+                />
+              </>
+            ) : null}
+            {tab === "Resource Monitors" ? (
+              <>
+                <label className="filter-pill filter-search">
+                  <span className="filter-pill-label">Search</span>
+                  <input
+                    value={monitorSearch}
+                    onChange={(e) => setMonitorSearch(e.target.value)}
+                    placeholder="Search monitors"
+                    aria-label="Search monitors"
+                  />
+                </label>
+                <FilterPill
+                  label="Level"
+                  value={monitorLevel}
+                  onChange={setMonitorLevel}
+                  options={monitorLevels.map((l) => ({ value: l, label: l }))}
+                />
+                <FilterPill
+                  label="Warehouse"
+                  value={monitorWh}
+                  onChange={setMonitorWh}
+                  options={monitorWarehouses.map((w) => ({ value: w, label: w }))}
+                />
+                <FilterPill
+                  label="Frequency"
+                  value={monitorFreq}
+                  onChange={setMonitorFreq}
+                  options={monitorFreqs.map((f) => ({ value: f, label: f }))}
+                />
+              </>
+            ) : null}
+            <button
+              type="button"
+              className="btn icon-refresh"
+              onClick={() => void load()}
+              disabled={loading}
+              title="Atualizar"
+              aria-label="Atualizar"
+            >
+              ↻
             </button>
           </div>
 
-          {err ? (
-            <div className="error-box">
-              {err}
-              <div style={{ marginTop: "0.5rem" }}>
-                <Link to={connectionId ? `/conexoes?edit=${connectionId}` : "/conexoes"}>
-                  Editar conexão (revalidar auth / warehouse / role)
-                </Link>
-              </div>
-            </div>
-          ) : null}
+          {err ? <ErrorBanner message={err} connectionId={connectionId} /> : null}
 
-          {tab === "Consumption" && data ? (
+          {loading && !err ? <CostSkeleton /> : null}
+
+          {!loading && tab === "Consumption" && data ? (
             <>
-              <div className="kpi">{data.total_credits.toFixed(1)} credits used</div>
+              <div className="kpi cost-kpi">
+                {summaryRows
+                  .reduce((a, r) => a + r.credits_used, 0)
+                  .toFixed(1)}{" "}
+                <span className="kpi-suffix">credits used</span>
+              </div>
               {chartData?.rows.length ? (
-                <div className="chart-wrap">
-                  <ResponsiveContainer width="100%" height={360}>
-                    <BarChart data={chartData.rows}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" />
-                      <XAxis dataKey="period" stroke="#8B939E" />
-                      <YAxis stroke="#8B939E" />
-                      <Tooltip
-                        contentStyle={{ background: "#1A1D21", border: "1px solid #2A2F36" }}
-                      />
-                      <Legend />
-                      {chartData.resources.map((r, i) => (
-                        <Bar
-                          key={r}
-                          dataKey={r}
-                          stackId="a"
-                          fill={
-                            ["#29B5E8", "#7AD3A0", "#C4A5E7", "#F0C674", "#E88B8B", "#8AB4F8"][
-                              i % 6
-                            ]
-                          }
-                        />
-                      ))}
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <StackedConsumptionChart
+                  rows={chartData.rows}
+                  resources={chartData.resources}
+                  grain={grain}
+                  onGrain={setGrain}
+                />
               ) : (
                 <div className="info-box">Nenhum consumo no período.</div>
               )}
-              <h3>Uso por recurso</h3>
-              <div className="table">
-                <div className="table-head">
-                  <span>NAME</span>
-                  <span>TYPE</span>
-                  <span>TAGS</span>
-                  <span>CREDITS USED</span>
-                </div>
-                {data.summary.map((row) => (
-                  <div key={row.name + row.type} className="table-row">
-                    <span>{row.name}</span>
-                    <span>{row.type}</span>
-                    <span>{row.tags}</span>
-                    <span className="credits-cell">
-                      <span
-                        className="bar"
-                        style={{
-                          width: `${Math.min(100, (row.credits_used / maxCredits) * 100)}%`,
-                        }}
-                      />
-                      <em>{row.credits_used.toFixed(1)}</em>
-                    </span>
-                  </div>
-                ))}
-              </div>
+              <CreditsTable rows={summaryRows} />
             </>
           ) : null}
 
-          {tab === "Account Overview" && overview ? (
+          {!loading && tab === "Account Overview" && overview ? (
             <>
               <div className="metrics">
                 <div className="metric">
@@ -370,8 +474,28 @@ export function CostManagementPage() {
               {overview.storage_note ? (
                 <div className="info-box">{overview.storage_note}</div>
               ) : null}
-              <h3>Por serviço</h3>
-              <div className="table">
+              <div className="chart-wrap cost-chart">
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart
+                    data={overview.by_service.map((r) => ({
+                      name: r.label,
+                      credits: r.credits,
+                    }))}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" vertical={false} />
+                    <XAxis dataKey="name" stroke="#8B939E" tick={{ fontSize: 11 }} />
+                    <YAxis stroke="#8B939E" />
+                    <Tooltip
+                      contentStyle={{
+                        background: "#1A1D21",
+                        border: "1px solid #2A2F36",
+                      }}
+                    />
+                    <Bar dataKey="credits" fill="#29B5E8" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="table cost-table">
                 <div className="table-head">
                   <span>SERVICE</span>
                   <span>CREDITS</span>
@@ -386,54 +510,33 @@ export function CostManagementPage() {
             </>
           ) : null}
 
-          {tab === "Anomalies" && anom ? (
+          {!loading && tab === "Anomalies" && anom ? (
             <>
               {anom.note ? <div className="info-box">{anom.note}</div> : null}
-              {!anom.items.length && !anom.note ? (
+              {anom.series && anom.series.length ? (
+                <AnomalyLineChart series={anom.series} />
+              ) : !anom.note ? (
                 <div className="info-box">Nenhuma anomalia relevante no período.</div>
-              ) : (
-                <div className="table">
+              ) : null}
+              {anom.anomalies && anom.anomalies.length ? (
+                <div className="table cost-table cost-table-anomalies">
                   <div className="table-head">
-                    <span>RESOURCE</span>
-                    <span>LATEST</span>
-                    <span>AVG</span>
-                    <span>% VS AVG</span>
+                    <span>DATE</span>
+                    <span>CONSUMPTION</span>
+                    <span>EXPECTED RANGE</span>
+                    <span>OVER/UNDER EXPECTED</span>
                   </div>
-                  {anom.items.map((r) => (
-                    <div key={r.resource_name} className="table-row">
-                      <span>{r.resource_name}</span>
-                      <span>{r.latest_credits.toFixed(2)}</span>
-                      <span>{r.avg_credits.toFixed(2)}</span>
-                      <span>
-                        {r.pct_vs_avg > 0 ? "+" : ""}
-                        {r.pct_vs_avg.toFixed(0)}% ({r.direction})
+                  {anom.anomalies.map((r) => (
+                    <div key={r.date} className="table-row">
+                      <span>{r.date}</span>
+                      <span>{r.credits.toFixed(2)} credits</span>
+                      <span className="muted">
+                        {r.expected_low.toFixed(2)} – {r.expected_high.toFixed(2)}
                       </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : null}
-
-          {tab === "Resource Monitors" && monitors ? (
-            <>
-              {monitors.note ? <div className="info-box">{monitors.note}</div> : null}
-              {monitors.items.length ? (
-                <div className="table">
-                  <div className="table-head">
-                    <span>NAME</span>
-                    <span>QUOTA</span>
-                    <span>USED</span>
-                    <span>REMAINING</span>
-                    <span>LEVEL</span>
-                  </div>
-                  {monitors.items.map((r) => (
-                    <div key={r.name} className="table-row">
-                      <span>{r.name}</span>
-                      <span>{r.credit_quota ?? "—"}</span>
-                      <span>{r.used_credits ?? "—"}</span>
-                      <span>{r.remaining_credits ?? "—"}</span>
-                      <span>{r.level}</span>
+                      <span className={r.delta > 0 ? "delta-pos" : "delta-neg"}>
+                        {r.delta > 0 ? "+" : ""}
+                        {r.delta.toFixed(2)} credits
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -441,31 +544,44 @@ export function CostManagementPage() {
             </>
           ) : null}
 
-          {tab === "Budgets" && budgets ? (
+          {!loading && tab === "Resource Monitors" && monitors ? (
+            <>
+              {monitors.note ? <div className="info-box">{monitors.note}</div> : null}
+              <div className="monitors-count muted">
+                {filteredMonitors.length} Resource Monitor
+                {filteredMonitors.length === 1 ? "" : "s"}
+              </div>
+              {filteredMonitors.length ? <MonitorsTable items={filteredMonitors} /> : null}
+            </>
+          ) : null}
+
+          {!loading && tab === "Budgets" && budgets ? (
             <>
               {budgets.note ? <div className="info-box">{budgets.note}</div> : null}
               {budgets.items.length ? (
-                <div className="table">
+                <div className="table cost-table">
                   <div className="table-head">
                     <span>NAME</span>
                     <span>DETAILS</span>
                   </div>
                   {budgets.items.map((r) => (
                     <div key={r.name} className="table-row">
-                      <span>{r.name}</span>
+                      <span className="mono">{r.name}</span>
                       <span className="muted">{JSON.stringify(r.raw)}</span>
                     </div>
                   ))}
                 </div>
+              ) : !budgets.note ? (
+                <div className="info-box">Nenhum budget configurado nesta conta.</div>
               ) : null}
             </>
           ) : null}
 
-          {tab === "Organization Overview" && org ? (
+          {!loading && tab === "Organization Overview" && org ? (
             <>
               {org.note ? <div className="info-box">{org.note}</div> : null}
               {org.items.length ? (
-                <div className="table">
+                <div className="table cost-table">
                   <div className="table-head">
                     <span>DATE</span>
                     <span>ACCOUNT</span>

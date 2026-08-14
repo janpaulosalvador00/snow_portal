@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field
 
 from backend.lib import db
 from backend.lib import oauth_local
-from backend.lib.snowflake_client import test_connection
+from backend.lib.snowflake_client import (
+    discover_session_options,
+    discover_session_options_with_creds,
+    test_connection,
+)
 from backend.security import get_current_user
 
 router = APIRouter(tags=["connections"])
@@ -95,6 +99,18 @@ class ConnectionUpdate(BaseModel):
     revalidate: bool = True
 
 
+class ConnectionDiscover(BaseModel):
+    """Ad-hoc credentials for Sign-in form before a connection is saved."""
+
+    account_identifier: str = Field(min_length=1)
+    username: str = Field(min_length=1)
+    auth_method: str = "pat"
+    secret: str | None = None
+    authenticator_url: str | None = None
+    warehouse: str | None = None
+    role_name: str | None = None
+
+
 def _serialize(row: dict) -> dict:
     return {
         "id": row["id"],
@@ -131,6 +147,54 @@ def test_conn(body: ConnectionTest, user: dict = Depends(get_current_user)):
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"ok": True, "message": msg}
+
+
+@router.get("/api/connections/{connection_id}/options")
+def connection_options(connection_id: int, user: dict = Depends(get_current_user)):
+    """List live warehouses and roles for a saved connection (ACL-gated)."""
+    if not db.user_can_access_connection(user, connection_id):
+        raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
+    try:
+        creds = db.get_connection_credentials(connection_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        options = discover_session_options_with_creds(creds)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **options}
+
+
+@router.post("/api/connections/discover")
+def discover_options(body: ConnectionDiscover, user: dict = Depends(get_current_user)):
+    """Discover WH/roles with ad-hoc credentials (Sign-in / before save)."""
+    _ = user
+    method = (body.auth_method or "pat").lower()
+    if method == "browser_oauth":
+        method = "oauth"
+    if method in ("pat", "password") and not (body.secret or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Informe PAT/senha para listar warehouses e roles, ou salve a conexão via Browser OAuth e use Editar.",
+        )
+    if method in ("oauth", "local_oauth") and not (body.secret or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Browser OAuth precisa de token salvo. Após conectar, use Editar → atualizar lista.",
+        )
+    try:
+        options = discover_session_options(
+            account=body.account_identifier,
+            user=body.username,
+            auth_method=method,
+            password=body.secret,
+            authenticator_url=body.authenticator_url,
+            warehouse=body.warehouse,
+            role=body.role_name,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **options}
 
 
 @router.post("/api/connections")

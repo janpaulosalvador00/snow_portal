@@ -22,3 +22,13 @@
 - [x] Hub alinhado a OAuth + conta ativa/inativa
 - [x] `docs/ROADMAP.md`
 - [ ] Validar Consumption com conta real após Editar WH (ação do operador)
+- [ ] Se 090073 / MONITORAMENTO_EMPRESA: subir cota do monitor de conta no Snowflake
+
+## UX Cost estilo Snowflake
+
+- [x] Chrome: tabs underline, filter pills, header conta/WH, auto-reload, skeletons
+- [x] Consumption: KPI + stacked bars + tabela com barras + View by Day/Month
+- [x] Anomalies: série diária + faixa esperada + tabela por data (créditos)
+- [x] Resource Monitors: % quota bars, search/filtros, warehouses; `+ Resource Monitor` disabled
+- [x] Account / Org / Budgets no mesmo shell
+- [x] Banners de erro acionáveis → Conexões (cota / WH)

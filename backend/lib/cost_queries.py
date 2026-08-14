@@ -147,23 +147,82 @@ def account_overview(creds: dict, *, days: int = 28) -> dict[str, Any]:
 
 
 def anomalies(creds: dict, *, days: int = 28) -> dict[str, Any]:
+    """Daily credit series with expected range (rolling mean ± 2·std) and outlier points."""
     df = fetch_consumption_for_creds(creds, days=days, grain="day", usage_type="All")
     if df.empty:
-        return {"items": [], "note": "Sem dados de metering no período."}
+        return {
+            "series": [],
+            "anomalies": [],
+            "items": [],
+            "note": "Sem dados de metering no período.",
+        }
 
     daily = (
+        df.groupby("period_start", dropna=False)["credits_display"]
+        .sum()
+        .reset_index()
+        .sort_values("period_start")
+    )
+    values = daily["credits_display"].astype(float).tolist()
+    window = max(7, min(14, max(3, len(values) // 3)))
+    k = 2.0
+
+    series: list[dict] = []
+    anomaly_rows: list[dict] = []
+    for i, (_, row) in enumerate(daily.iterrows()):
+        period = row["period_start"]
+        date_str = period.isoformat() if hasattr(period, "isoformat") else str(period)
+        if "T" in date_str:
+            date_str = date_str[:10]
+        credits = float(row["credits_display"] or 0)
+        hist = values[max(0, i - window + 1) : i] if i > 0 else values[:1]
+        mean = float(sum(hist) / len(hist)) if hist else credits
+        if len(hist) >= 2:
+            var = sum((x - mean) ** 2 for x in hist) / len(hist)
+            std = var**0.5
+        else:
+            std = 0.0
+        low = max(0.0, mean - k * std)
+        high = mean + k * std
+        if high <= low:
+            high = low + max(0.01, mean * 0.1 + 0.01)
+        is_anom = credits > high or (credits < low and mean > 0.5)
+        series.append(
+            {
+                "date": date_str,
+                "credits": credits,
+                "expected_low": round(low, 4),
+                "expected_high": round(high, 4),
+                "is_anomaly": is_anom,
+            }
+        )
+        if is_anom:
+            delta = credits - high if credits > high else credits - low
+            anomaly_rows.append(
+                {
+                    "date": date_str,
+                    "credits": round(credits, 4),
+                    "expected_low": round(low, 4),
+                    "expected_high": round(high, 4),
+                    "delta": round(delta, 4),
+                }
+            )
+
+    anomaly_rows.sort(key=lambda x: x["date"], reverse=True)
+
+    by_res = (
         df.groupby(["period_start", "resource_name"], dropna=False)["credits_display"]
         .sum()
         .reset_index()
     )
     items: list[dict] = []
-    for name, grp in daily.groupby("resource_name"):
-        series = grp["credits_display"].astype(float)
-        if len(series) < 3:
+    for name, grp in by_res.groupby("resource_name"):
+        s = grp["credits_display"].astype(float)
+        if len(s) < 3:
             continue
-        mean = float(series.mean())
-        std = float(series.std(ddof=0)) or 0.0
-        latest = float(series.iloc[-1])
+        mean = float(s.mean())
+        std = float(s.std(ddof=0)) or 0.0
+        latest = float(s.iloc[-1])
         if mean <= 0:
             continue
         pct = ((latest - mean) / mean) * 100
@@ -177,11 +236,17 @@ def anomalies(creds: dict, *, days: int = 28) -> dict[str, Any]:
                 "avg_credits": mean,
                 "pct_vs_avg": pct,
                 "z_score": z,
-                "severity": "high" if pct > 0 else "low",
+                "direction": "high" if pct > 0 else "low",
             }
         )
     items.sort(key=lambda x: abs(x["pct_vs_avg"]), reverse=True)
-    return {"items": items[:50], "note": None}
+
+    return {
+        "series": series,
+        "anomalies": anomaly_rows[:100],
+        "items": items[:50],
+        "note": None,
+    }
 
 
 def _run_show(creds: dict, sql: str) -> tuple[pd.DataFrame | None, str | None]:
@@ -228,16 +293,57 @@ def resource_monitors(creds: dict) -> dict[str, Any]:
     if df is None or df.empty:
         return {"items": [], "note": "Nenhum resource monitor nesta conta."}
 
+    # Map monitor name -> warehouses via SHOW WAREHOUSES.resource_monitor
+    wh_by_monitor: dict[str, list[str]] = {}
+    wh_df, _wh_err = _run_show(creds, "SHOW WAREHOUSES")
+    if wh_df is not None and not wh_df.empty:
+        name_col = "name" if "name" in wh_df.columns else wh_df.columns[0]
+        mon_col = None
+        for c in wh_df.columns:
+            if "resource_monitor" in str(c).lower():
+                mon_col = c
+                break
+        if mon_col:
+            for _, wr in wh_df.iterrows():
+                mon = wr.get(mon_col)
+                if mon is None or (isinstance(mon, float) and pd.isna(mon)):
+                    continue
+                mon_s = str(mon).strip()
+                if not mon_s or mon_s.upper() in ("NONE", "NULL", ""):
+                    continue
+                wh_name = str(wr.get(name_col) or "").strip()
+                if not wh_name:
+                    continue
+                wh_by_monitor.setdefault(mon_s.upper(), []).append(wh_name)
+
     items = []
     for _, r in df.iterrows():
+        name = str(r.get("name") or r.get('"name"') or "—")
+        quota = _num(r, "credit_quota")
+        used = _num(r, "used_credits")
+        remaining = _num(r, "remaining_credits")
+        pct = None
+        if quota is not None and quota > 0 and used is not None:
+            pct = round(100.0 * used / quota, 2)
+        start = r.get("start_time") or r.get("created_on") or r.get('"start_time"')
+        if hasattr(start, "isoformat"):
+            start_s = start.isoformat()
+        elif start is not None and not (isinstance(start, float) and pd.isna(start)):
+            start_s = str(start)
+        else:
+            start_s = None
+        warehouses = wh_by_monitor.get(name.upper(), [])
         items.append(
             {
-                "name": r.get("name") or r.get("\"name\"") or "—",
-                "credit_quota": _num(r, "credit_quota"),
-                "used_credits": _num(r, "used_credits"),
-                "remaining_credits": _num(r, "remaining_credits"),
-                "level": str(r.get("level") or r.get("\"level\"") or "—"),
+                "name": name,
+                "credit_quota": quota,
+                "used_credits": used,
+                "remaining_credits": remaining,
+                "quota_used_pct": pct,
+                "level": str(r.get("level") or r.get('"level"') or "—"),
                 "frequency": str(r.get("frequency") or "—"),
+                "warehouses": warehouses,
+                "start_time": start_s,
             }
         )
     return {"items": items, "note": None}

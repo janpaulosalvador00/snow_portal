@@ -16,6 +16,20 @@ type Conn = {
 
 type Team = { id: number; name: string };
 
+type WarehouseOption = {
+  name: string;
+  state?: string | null;
+  suggested?: boolean;
+};
+
+type SessionOptions = {
+  warehouses: WarehouseOption[];
+  roles: string[];
+  suggested_warehouse?: string | null;
+  stored_warehouse_exists?: boolean | null;
+  hint?: string;
+};
+
 type MethodDef = {
   key: string;
   label: string;
@@ -66,6 +80,11 @@ export function ConnectionsPage() {
   const [editSecret, setEditSecret] = useState("");
   const [editWarehouse, setEditWarehouse] = useState("");
   const [editRole, setEditRole] = useState("");
+  const [editOptions, setEditOptions] = useState<SessionOptions | null>(null);
+  const [editOptionsErr, setEditOptionsErr] = useState<string | null>(null);
+  const [editOptionsBusy, setEditOptionsBusy] = useState(false);
+  const [editManualWh, setEditManualWh] = useState(false);
+  const [editManualRole, setEditManualRole] = useState(false);
   const editSecretRef = useRef<HTMLInputElement>(null);
   const [method, setMethod] = useState("browser_oauth");
   const [account, setAccount] = useState("");
@@ -74,6 +93,11 @@ export function ConnectionsPage() {
   const [secret, setSecret] = useState("");
   const [warehouse, setWarehouse] = useState("");
   const [roleName, setRoleName] = useState("");
+  const [signinOptions, setSigninOptions] = useState<SessionOptions | null>(null);
+  const [signinOptionsErr, setSigninOptionsErr] = useState<string | null>(null);
+  const [signinOptionsBusy, setSigninOptionsBusy] = useState(false);
+  const [signinManualWh, setSigninManualWh] = useState(false);
+  const [signinManualRole, setSigninManualRole] = useState(false);
   const [teamId, setTeamId] = useState<number | "">("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -126,6 +150,11 @@ export function ConnectionsPage() {
         if (id) {
           setActiveConnectionId(id);
           setActiveId(id);
+          // Open edit + refresh WH/role lists from the live account
+          void api<Conn[]>("/api/connections").then((list) => {
+            const target = list.find((c) => c.id === id);
+            if (target) startEdit(target);
+          });
         }
       });
     } else if (oauth === "error") {
@@ -165,8 +194,89 @@ export function ConnectionsPage() {
     setEditSecret("");
     setEditWarehouse(c.warehouse || "");
     setEditRole(c.role_name || "");
+    setEditOptions(null);
+    setEditOptionsErr(null);
+    setEditManualWh(false);
+    setEditManualRole(false);
     setErr(null);
     setMsg(null);
+    void loadEditOptions(c.id);
+  }
+
+  async function loadEditOptions(connectionId: number) {
+    setEditOptionsBusy(true);
+    setEditOptionsErr(null);
+    try {
+      const res = await api<SessionOptions & { ok?: boolean }>(
+        `/api/connections/${connectionId}/options`,
+      );
+      setEditOptions(res);
+      setEditManualWh(false);
+      setEditManualRole(false);
+      // If stored WH does not exist on account, clear toward suggested / empty
+      if (res.stored_warehouse_exists === false) {
+        setEditWarehouse(res.suggested_warehouse || "");
+      }
+    } catch (e) {
+      setEditOptions(null);
+      setEditOptionsErr(
+        e instanceof ApiError
+          ? e.message
+          : "Não foi possível listar warehouses/roles. Digite manualmente.",
+      );
+      setEditManualWh(true);
+      setEditManualRole(true);
+    } finally {
+      setEditOptionsBusy(false);
+    }
+  }
+
+  async function loadSigninOptions() {
+    setSigninOptionsBusy(true);
+    setSigninOptionsErr(null);
+    if (method === "browser_oauth") {
+      setSigninOptionsErr(
+        "Após Conectar via browser, abra Editar na conexão salva para listar warehouses e roles.",
+      );
+      setSigninOptionsBusy(false);
+      return;
+    }
+    const resolvedSecret = (secret || secretRef.current?.value || "").trim();
+    if (!account.trim() || !sfUser.trim() || !resolvedSecret) {
+      setSigninOptionsErr("Preencha conta, usuário e PAT/senha para listar opções.");
+      setSigninOptionsBusy(false);
+      return;
+    }
+    try {
+      const res = await api<SessionOptions & { ok?: boolean }>("/api/connections/discover", {
+        method: "POST",
+        body: JSON.stringify({
+          account_identifier: account.trim(),
+          username: sfUser.trim(),
+          auth_method: method,
+          secret: resolvedSecret,
+          warehouse: warehouse.trim() || null,
+          role_name: roleName.trim() || null,
+        }),
+      });
+      setSigninOptions(res);
+      setSigninManualWh(false);
+      setSigninManualRole(false);
+      if (!warehouse.trim() && res.suggested_warehouse) {
+        setWarehouse(res.suggested_warehouse);
+      }
+    } catch (e) {
+      setSigninOptions(null);
+      setSigninOptionsErr(
+        e instanceof ApiError
+          ? e.message
+          : "Falha ao listar warehouses/roles. Digite manualmente.",
+      );
+      setSigninManualWh(true);
+      setSigninManualRole(true);
+    } finally {
+      setSigninOptionsBusy(false);
+    }
   }
 
   async function reconnectEditOAuth(id: number) {
@@ -478,20 +588,107 @@ export function ConnectionsPage() {
                       )}
                       <label>
                         Warehouse (vazio = auto / evita WH com cota estourada)
-                        <input
-                          value={editWarehouse}
-                          onChange={(e) => setEditWarehouse(e.target.value)}
-                          placeholder="COMPUTE_WH ou vazio"
-                        />
+                        {editManualWh || !editOptions?.warehouses?.length ? (
+                          <input
+                            value={editWarehouse}
+                            onChange={(e) => setEditWarehouse(e.target.value)}
+                            placeholder="WH_CON_EXT ou vazio (auto)"
+                            list="edit-wh-suggestions"
+                          />
+                        ) : (
+                          <select
+                            value={editWarehouse}
+                            onChange={(e) => setEditWarehouse(e.target.value)}
+                          >
+                            <option value="">(auto — escolher WH disponível)</option>
+                            {editOptions.warehouses
+                              .filter((w) => w.suggested)
+                              .map((w) => (
+                                <option key={w.name} value={w.name}>
+                                  {w.name}
+                                  {w.state ? ` (${w.state})` : ""}
+                                </option>
+                              ))}
+                            {editWarehouse &&
+                            !editOptions.warehouses.some(
+                              (w) => w.suggested && w.name === editWarehouse,
+                            ) ? (
+                              <option value={editWarehouse}>
+                                {editWarehouse} (atual / não sugerido)
+                              </option>
+                            ) : null}
+                          </select>
+                        )}
                       </label>
+                      <datalist id="edit-wh-suggestions">
+                        {(editOptions?.warehouses || [])
+                          .filter((w) => w.suggested)
+                          .map((w) => (
+                            <option key={w.name} value={w.name} />
+                          ))}
+                      </datalist>
                       <label>
                         Role
-                        <input
-                          value={editRole}
-                          onChange={(e) => setEditRole(e.target.value)}
-                          placeholder="ACCOUNTADMIN"
-                        />
+                        {editManualRole || !editOptions?.roles?.length ? (
+                          <input
+                            value={editRole}
+                            onChange={(e) => setEditRole(e.target.value)}
+                            placeholder="ACCOUNTADMIN"
+                            list="edit-role-suggestions"
+                          />
+                        ) : (
+                          <select value={editRole} onChange={(e) => setEditRole(e.target.value)}>
+                            <option value="">(padrão da sessão)</option>
+                            {editOptions.roles.map((r) => (
+                              <option key={r} value={r}>
+                                {r}
+                              </option>
+                            ))}
+                            {editRole && !editOptions.roles.includes(editRole) ? (
+                              <option value={editRole}>{editRole} (atual)</option>
+                            ) : null}
+                          </select>
+                        )}
                       </label>
+                      <datalist id="edit-role-suggestions">
+                        {(editOptions?.roles || []).map((r) => (
+                          <option key={r} value={r} />
+                        ))}
+                      </datalist>
+                      <div className="row-actions" style={{ marginTop: "-0.25rem" }}>
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={editOptionsBusy || busy}
+                          onClick={() => void loadEditOptions(c.id)}
+                        >
+                          {editOptionsBusy ? "Atualizando…" : "Atualizar WH / Roles"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => {
+                            setEditManualWh((v) => !v);
+                            setEditManualRole((v) => !v);
+                          }}
+                        >
+                          {editManualWh ? "Usar lista" : "Digitar manualmente"}
+                        </button>
+                      </div>
+                      {editOptionsErr ? (
+                        <div className="warn-box">{editOptionsErr}</div>
+                      ) : null}
+                      {editOptions?.hint ? (
+                        <p className="muted" style={{ margin: 0 }}>
+                          {editOptions.hint}
+                        </p>
+                      ) : (
+                        <p className="muted" style={{ margin: 0 }}>
+                          Prefira WH_CON_EXT. Se o monitor MONITORAMENTO_EMPRESA estiver sem
+                          cota (090073), trocar o WH não resolve — aumente a cota ou aguarde o
+                          reset mensal.
+                        </p>
+                      )}
                       <div className="row-actions">
                         {editMethod === "browser_oauth" ? (
                           <button
@@ -611,16 +808,94 @@ export function ConnectionsPage() {
             </label>
           ) : null}
 
-          <details>
-            <summary>Optional Settings</summary>
+          <details open>
+            <summary>Optional Settings (Warehouse / Role)</summary>
             <label>
               Warehouse
-              <input value={warehouse} onChange={(e) => setWarehouse(e.target.value)} />
+              {signinManualWh || !signinOptions?.warehouses?.length ? (
+                <input
+                  value={warehouse}
+                  onChange={(e) => setWarehouse(e.target.value)}
+                  placeholder="WH_CON_EXT ou vazio (auto)"
+                  list="signin-wh-suggestions"
+                />
+              ) : (
+                <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)}>
+                  <option value="">(auto — escolher WH disponível)</option>
+                  {signinOptions.warehouses
+                    .filter((w) => w.suggested)
+                    .map((w) => (
+                      <option key={w.name} value={w.name}>
+                        {w.name}
+                        {w.state ? ` (${w.state})` : ""}
+                      </option>
+                    ))}
+                </select>
+              )}
             </label>
+            <datalist id="signin-wh-suggestions">
+              {(signinOptions?.warehouses || [])
+                .filter((w) => w.suggested)
+                .map((w) => (
+                  <option key={w.name} value={w.name} />
+                ))}
+            </datalist>
             <label>
               Role
-              <input value={roleName} onChange={(e) => setRoleName(e.target.value)} />
+              {signinManualRole || !signinOptions?.roles?.length ? (
+                <input
+                  value={roleName}
+                  onChange={(e) => setRoleName(e.target.value)}
+                  placeholder="ACCOUNTADMIN"
+                  list="signin-role-suggestions"
+                />
+              ) : (
+                <select value={roleName} onChange={(e) => setRoleName(e.target.value)}>
+                  <option value="">(padrão da sessão)</option>
+                  {signinOptions.roles.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              )}
             </label>
+            <datalist id="signin-role-suggestions">
+              {(signinOptions?.roles || []).map((r) => (
+                <option key={r} value={r} />
+              ))}
+            </datalist>
+            <div className="row-actions">
+              <button
+                type="button"
+                className="btn"
+                disabled={signinOptionsBusy || busy}
+                onClick={() => void loadSigninOptions()}
+              >
+                {signinOptionsBusy ? "Listando…" : "Listar WH / Roles da conta"}
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => {
+                  setSigninManualWh((v) => !v);
+                  setSigninManualRole((v) => !v);
+                }}
+              >
+                {signinManualWh ? "Usar lista" : "Digitar manualmente"}
+              </button>
+            </div>
+            {signinOptionsErr ? <div className="warn-box">{signinOptionsErr}</div> : null}
+            {signinOptions?.hint ? (
+              <p className="muted" style={{ margin: 0 }}>
+                {signinOptions.hint}
+              </p>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                Prefira WH_CON_EXT. WH_ANALISTA / SYSTEM$* podem falhar por cota do monitor
+                MONITORAMENTO_EMPRESA (090073).
+              </p>
+            )}
           </details>
 
           <label>

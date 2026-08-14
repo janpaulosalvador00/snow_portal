@@ -439,9 +439,7 @@ export function CostManagementPage() {
                     >
                       {connections.map((c) => (
                         <option key={c.id} value={c.id}>
-                          {c.account_identifier.includes("-")
-                            ? c.account_identifier.split("-").slice(-1)[0]
-                            : c.name}
+                          {c.name}
                         </option>
                       ))}
                     </select>
@@ -502,7 +500,7 @@ export function CostManagementPage() {
                   }}
                   options={connections.map((c) => ({
                     value: String(c.id),
-                    label: `${c.name} (${c.account_identifier})`,
+                    label: c.name,
                   }))}
                 />
                 {showTimeNonConsumption ? (

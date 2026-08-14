@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.lib import db
-from backend.routers import admin, auth, connections, consumption, cost
+from backend.routers import admin, alerts, auth, connections, consumption, cost
 
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ app.include_router(auth.router)
 app.include_router(connections.router)
 app.include_router(consumption.router)
 app.include_router(cost.router)
+app.include_router(alerts.router)
 app.include_router(admin.router)
 
 

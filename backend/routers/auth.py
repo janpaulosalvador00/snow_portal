@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.lib import db
-from backend.security import create_access_token, get_current_user
+from backend.security import create_access_token, get_current_user, public_role
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -28,7 +28,7 @@ def login(body: LoginRequest):
         "user": {
             "id": user["id"],
             "username": user["username"],
-            "role": user["role"],
+            "role": public_role(user["role"]),
             "team_id": user.get("team_id"),
             "team_name": user.get("team_name"),
         },

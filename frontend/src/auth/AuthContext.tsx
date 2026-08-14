@@ -12,7 +12,7 @@ import { api, getToken, setToken } from "../api/client";
 export type PortalUser = {
   id: number;
   username: string;
-  role: "admin" | "analyst" | string;
+  role: "admin" | "suporte" | "analyst" | string;
   team_id?: number | null;
   team_name?: string | null;
 };

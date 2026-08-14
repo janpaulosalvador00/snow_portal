@@ -1,5 +1,6 @@
-import { type ReactNode, type WheelEvent } from "react";
+import { useEffect, useState, type ReactNode, type WheelEvent } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { ALERTS_BADGE_EVENT, getAlerts } from "../api/alerts";
 import { useAuth } from "../auth/AuthContext";
 
 function NavIcon({ children }: { children: ReactNode }) {
@@ -23,6 +24,18 @@ function NavIcon({ children }: { children: ReactNode }) {
 
 export function AppShell() {
   const { user, logout } = useAuth();
+  const [alertsCount, setAlertsCount] = useState(0);
+
+  useEffect(() => {
+    const onBadge = (event: Event) => {
+      setAlertsCount(Number((event as CustomEvent<number>).detail) || 0);
+    };
+    window.addEventListener(ALERTS_BADGE_EVENT, onBadge);
+    void getAlerts()
+      .then((response) => setAlertsCount(response.critical_clients))
+      .catch(() => setAlertsCount(0));
+    return () => window.removeEventListener(ALERTS_BADGE_EVENT, onBadge);
+  }, []);
 
   // Wheel over the sticky sidebar must scroll the page (otherwise it feels stuck).
   function onSidebarWheel(e: WheelEvent<HTMLElement>) {
@@ -34,10 +47,7 @@ export function AppShell() {
     <div className="app-shell">
       <aside className="sidebar" onWheel={onSidebarWheel}>
         <div className="brand">Snow Portal</div>
-        <div className="user-meta">
-          {user?.username} · {user?.role}
-          {user?.team_name ? <div className="muted">Time: {user.team_name}</div> : null}
-        </div>
+        <div className="user-meta">Time: {user?.team_name || "Suporte"}</div>
         <nav>
           <NavLink to="/" end>
             <NavIcon>
@@ -63,6 +73,21 @@ export function AppShell() {
               <path d="M16 17v-4" />
             </NavIcon>
             Cost Management
+          </NavLink>
+          <NavLink to="/alerts">
+            <NavIcon>
+              <path d="M12 3a6 6 0 0 0-6 6c0 4-2 5-2 5h16s-2-1-2-5a6 6 0 0 0-6-6z" />
+              <path d="M10.5 20a1.8 1.8 0 0 0 3 0" />
+            </NavIcon>
+            Alerts
+            {alertsCount > 0 ? (
+              <span
+                className="nav-badge"
+                aria-label={`${alertsCount} clientes exigem atenção`}
+              >
+                {alertsCount}
+              </span>
+            ) : null}
           </NavLink>
           {user?.role === "admin" ? (
             <NavLink to="/admin">

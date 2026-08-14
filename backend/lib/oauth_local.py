@@ -68,6 +68,7 @@ def create_oauth_pending(
     warehouse: str | None,
     role_name: str | None,
     team_id: int | None,
+    connection_id: int | None = None,
 ) -> dict[str, str]:
     verifier, challenge = make_pkce()
     state = secrets.token_urlsafe(24)
@@ -98,6 +99,7 @@ def create_oauth_pending(
             "warehouse": warehouse or None,
             "role_name": role_name or None,
             "team_id": team_id,
+            "connection_id": connection_id,
             "code_verifier": verifier,
             "redirect_uri": redirect_uri,
         }

@@ -286,7 +286,9 @@ export function CostManagementPage() {
             <div className="error-box">
               {err}
               <div style={{ marginTop: "0.5rem" }}>
-                <Link to="/conexoes">Editar conexão (warehouse / role)</Link>
+                <Link to={connectionId ? `/conexoes?edit=${connectionId}` : "/conexoes"}>
+                  Editar conexão (revalidar auth / warehouse / role)
+                </Link>
               </div>
             </div>
           ) : null}

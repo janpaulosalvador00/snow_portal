@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.lib import db
 from backend.lib import cost_queries
+from backend.lib.snowflake_client import friendly_connect_error
 from backend.security import get_current_user
 
 router = APIRouter(prefix="/api/cost", tags=["cost"])
@@ -40,11 +41,12 @@ def cost_consumption(
         )
         return cost_queries.consumption_payload(raw)
     except Exception as exc:  # noqa: BLE001
+        detail = friendly_connect_error(exc, auth_method=creds.get("auth_method"))
         raise HTTPException(
             status_code=400,
             detail=(
                 "Falha ao consultar créditos. Confirme autenticação, role com acesso a "
-                f"ACCOUNT_USAGE e warehouse. Detalhe: {exc}"
+                f"ACCOUNT_USAGE e warehouse. Detalhe: {detail}"
             ),
         ) from exc
 

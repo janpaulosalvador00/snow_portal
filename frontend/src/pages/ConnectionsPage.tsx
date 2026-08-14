@@ -60,8 +60,13 @@ export function ConnectionsPage() {
   const [activeId, setActiveId] = useState<number | null>(getActiveConnectionId());
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
+  const [editAccount, setEditAccount] = useState("");
+  const [editUser, setEditUser] = useState("");
+  const [editMethod, setEditMethod] = useState("browser_oauth");
+  const [editSecret, setEditSecret] = useState("");
   const [editWarehouse, setEditWarehouse] = useState("");
   const [editRole, setEditRole] = useState("");
+  const editSecretRef = useRef<HTMLInputElement>(null);
   const [method, setMethod] = useState("browser_oauth");
   const [account, setAccount] = useState("");
   const [name, setName] = useState("");
@@ -89,6 +94,20 @@ export function ConnectionsPage() {
       .catch(() => setTeams([]));
   }, []);
 
+  // Deep-link from Cost Management: /conexoes?edit=<id>
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const editRaw = params.get("edit");
+    if (!editRaw || !connections.length) return;
+    const editId = Number(editRaw);
+    if (!editId) return;
+    const target = connections.find((c) => c.id === editId);
+    if (!target) return;
+    setTab("hub");
+    startEdit(target);
+    window.history.replaceState({}, "", "/conexoes");
+  }, [connections]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauth = params.get("oauth");
@@ -97,7 +116,11 @@ export function ConnectionsPage() {
       const id = Number(params.get("connection_id") || "");
       setTab("hub");
       setBusy(false);
-      setMsg("Login Snowflake via browser concluído. Conexão salva e pronta para uso.");
+      setMsg(
+        id
+          ? "Login Snowflake via browser concluído. Conexão atualizada e autenticada."
+          : "Login Snowflake via browser concluído. Conexão salva e pronta para uso.",
+      );
       setErr(null);
       void reload().then(() => {
         if (id) {
@@ -135,30 +158,98 @@ export function ConnectionsPage() {
   function startEdit(c: Conn) {
     setEditingId(c.id);
     setEditName(c.name);
+    setEditAccount(c.account_identifier);
+    setEditUser(c.username);
+    const m = c.auth_method === "oauth" || c.auth_method === "local_oauth" ? "browser_oauth" : c.auth_method;
+    setEditMethod(m === "pat" || m === "password" ? m : "browser_oauth");
+    setEditSecret("");
     setEditWarehouse(c.warehouse || "");
     setEditRole(c.role_name || "");
     setErr(null);
+    setMsg(null);
   }
 
-  async function saveEdit(id: number) {
+  async function reconnectEditOAuth(id: number) {
+    if (!editAccount.trim() || !editUser.trim()) {
+      setErr("Preencha Account Identifier e Username.");
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
-      await api(`/api/connections/${id}`, {
-        method: "PATCH",
+      const res = await api<{ authorize_url: string }>("/api/connections/oauth/start", {
+        method: "POST",
         body: JSON.stringify({
-          name: editName.trim() || undefined,
-          warehouse: editWarehouse,
-          role_name: editRole,
-          clear_warehouse: !editWarehouse.trim(),
-          clear_role: !editRole.trim(),
+          connection_id: id,
+          account_identifier: editAccount.trim(),
+          username: editUser.trim(),
+          name: editName.trim() || null,
+          warehouse: editWarehouse.trim() || null,
+          role_name: editRole.trim() || null,
+          team_id: teamId === "" ? null : Number(teamId),
         }),
       });
-      setEditingId(null);
-      setMsg("Conexão atualizada.");
-      await reload();
+      setMsg("Reconectando via browser…");
+      window.location.href = res.authorize_url;
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Falha ao editar conexão.");
+      setErr(e instanceof ApiError ? e.message : "Falha ao iniciar OAuth.");
+      setBusy(false);
+    }
+  }
+
+  async function saveEdit(id: number, testOnly: boolean) {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    if (editMethod === "browser_oauth") {
+      await reconnectEditOAuth(id);
+      return;
+    }
+    const resolvedSecret = (editSecret || editSecretRef.current?.value || "").trim();
+    if (!resolvedSecret) {
+      setErr(editMethod === "pat" ? "Cole o novo PAT para revalidar." : "Informe a senha para revalidar.");
+      setBusy(false);
+      editSecretRef.current?.focus();
+      return;
+    }
+    const payload = {
+      name: editName.trim() || undefined,
+      account_identifier: editAccount.trim(),
+      username: editUser.trim(),
+      auth_method: editMethod,
+      secret: resolvedSecret,
+      warehouse: editWarehouse,
+      role_name: editRole,
+      clear_warehouse: !editWarehouse.trim(),
+      clear_role: !editRole.trim(),
+      revalidate: true,
+    };
+    try {
+      if (testOnly) {
+        const res = await api<{ message: string }>("/api/connections/test", {
+          method: "POST",
+          body: JSON.stringify({
+            account_identifier: payload.account_identifier,
+            username: payload.username,
+            auth_method: payload.auth_method,
+            secret: payload.secret,
+            warehouse: editWarehouse.trim() || null,
+            role_name: editRole.trim() || null,
+          }),
+        });
+        setMsg(res.message);
+      } else {
+        const res = await api<{ message: string; connection: Conn }>(`/api/connections/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        setEditingId(null);
+        setEditSecret("");
+        setMsg(res.message || "Conexão atualizada e autenticada.");
+        await reload();
+      }
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Falha ao editar/revalidar conexão.");
     } finally {
       setBusy(false);
     }
@@ -333,12 +424,60 @@ export function ConnectionsPage() {
                   </div>
                   {isEditing ? (
                     <div className="form-stack" style={{ marginTop: "0.75rem" }}>
+                      <div className="info-box">
+                        Revalide como um cadastro novo: altere os campos e autentique de novo
+                        (Browser OAuth ou PAT/senha).
+                      </div>
+                      <label>
+                        Method
+                        <select value={editMethod} onChange={(e) => setEditMethod(e.target.value)}>
+                          {METHODS_RECOMMENDED.map((m) => (
+                            <option key={m.key} value={m.key}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Account Identifier *
+                        <input
+                          value={editAccount}
+                          onChange={(e) => setEditAccount(e.target.value)}
+                          required
+                        />
+                      </label>
                       <label>
                         Nome
                         <input value={editName} onChange={(e) => setEditName(e.target.value)} />
                       </label>
                       <label>
-                        Warehouse (vazio = não forçar WH — evita WH_ANALISTA com cota estourada)
+                        Username *
+                        <input
+                          value={editUser}
+                          onChange={(e) => setEditUser(e.target.value)}
+                          required
+                        />
+                      </label>
+                      {editMethod === "pat" || editMethod === "password" ? (
+                        <label>
+                          {editMethod === "pat" ? "Programmatic Access Token *" : "Password *"}
+                          <input
+                            ref={editSecretRef}
+                            type="password"
+                            value={editSecret}
+                            onChange={(e) => setEditSecret(e.target.value)}
+                            placeholder="Obrigatório para revalidar"
+                            required
+                          />
+                        </label>
+                      ) : (
+                        <div className="warn-box">
+                          Browser OAuth: ao salvar, o login Snowflake abre no browser e substitui o
+                          token desta conexão.
+                        </div>
+                      )}
+                      <label>
+                        Warehouse (vazio = auto / evita WH com cota estourada)
                         <input
                           value={editWarehouse}
                           onChange={(e) => setEditWarehouse(e.target.value)}
@@ -354,21 +493,48 @@ export function ConnectionsPage() {
                         />
                       </label>
                       <div className="row-actions">
+                        {editMethod === "browser_oauth" ? (
+                          <button
+                            type="button"
+                            className="btn primary"
+                            disabled={busy}
+                            onClick={() => void saveEdit(c.id, false)}
+                          >
+                            Reconectar via browser
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={busy}
+                              onClick={() => void saveEdit(c.id, true)}
+                            >
+                              Testar conexão
+                            </button>
+                            <button
+                              type="button"
+                              className="btn primary"
+                              disabled={busy}
+                              onClick={() => void saveEdit(c.id, false)}
+                            >
+                              Salvar e revalidar
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
-                          className="btn primary"
-                          disabled={busy}
-                          onClick={() => void saveEdit(c.id)}
+                          className="btn ghost"
+                          onClick={() => {
+                            setEditingId(null);
+                            setEditSecret("");
+                          }}
                         >
-                          Salvar
-                        </button>
-                        <button type="button" className="btn ghost" onClick={() => setEditingId(null)}>
                           Cancelar
                         </button>
                       </div>
                       <p className="muted" style={{ margin: 0 }}>
-                        Depois de ajustar WH/role, abra{" "}
-                        <Link to="/cost-management">Cost Management</Link>.
+                        Depois de autenticar, abra <Link to="/cost-management">Cost Management</Link>.
                       </p>
                     </div>
                   ) : null}

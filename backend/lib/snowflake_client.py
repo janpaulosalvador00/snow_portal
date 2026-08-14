@@ -42,6 +42,12 @@ def friendly_connect_error(exc: BaseException, *, auth_method: str | None = None
             "e tente de novo."
         )
 
+    if "000606" in raw or "no active warehouse" in lower:
+        return (
+            "Nenhum warehouse ativo na sessão. Em Conexões → Editar, informe um Warehouse "
+            "válido (ex.: COMPUTE_WH), revalide a autenticação e tente de novo."
+        )
+
     if "390190" in raw or "saml identity provider" in lower:
         return (
             "Erro 390190 (SAML). Esta conta não tem External Browser/SSO configurado. "
@@ -174,6 +180,61 @@ def test_connection(
         return False, friendly_connect_error(exc, auth_method=auth_method)
 
 
+def _is_warehouse_session_error(exc: BaseException) -> bool:
+    raw = str(exc)
+    lower = raw.lower()
+    return (
+        "resource monitor" in lower
+        or "cannot be resumed" in lower
+        or "090073" in raw
+        or "no active warehouse" in lower
+        or "000606" in raw
+    )
+
+
+def _list_warehouse_candidates(conn, preferred: str | None) -> list[str]:
+    """Ordered WH names to try: preferred, STARTED, others (skip WH_ANALISTA), COMPUTE_WH."""
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(name: str | None) -> None:
+        if not name:
+            return
+        key = name.strip().upper()
+        if not key or key in seen:
+            return
+        seen.add(key)
+        candidates.append(name.strip())
+
+    _add(preferred)
+
+    try:
+        cur = conn.cursor()
+        cur.execute("SHOW WAREHOUSES")
+        rows = cur.fetchall()
+        cols = [c[0].lower() for c in cur.description] if cur.description else []
+        name_idx = cols.index("name") if "name" in cols else 0
+        state_idx = cols.index("state") if "state" in cols else None
+        started: list[str] = []
+        others: list[str] = []
+        for row in rows:
+            name = str(row[name_idx])
+            state = str(row[state_idx]).upper() if state_idx is not None else ""
+            if name.upper() == "WH_ANALISTA":
+                continue
+            if state == "STARTED":
+                started.append(name)
+            else:
+                others.append(name)
+        for name in started + others:
+            _add(name)
+    except Exception:  # noqa: BLE001 — fall through to COMPUTE_WH
+        pass
+
+    _add("COMPUTE_WH")
+    return candidates
+
+
 def run_query(
     *,
     account: str,
@@ -186,39 +247,18 @@ def run_query(
     warehouse: str | None = None,
     role: str | None = None,
 ) -> pd.DataFrame:
-    def _execute(conn, wh_override: str | None = None) -> pd.DataFrame:
+    preferred = (warehouse or "").strip() or None
+
+    def _execute(conn, wh: str | None) -> pd.DataFrame:
         cur = conn.cursor()
-        if wh_override:
-            cur.execute(f'USE WAREHOUSE "{wh_override}"')
+        if wh:
+            # Explicit USE — connector warehouse= alone can leave session without WH (OAuth)
+            safe = wh.replace('"', "")
+            cur.execute(f'USE WAREHOUSE "{safe}"')
         cur.execute(sql, params or ())
         columns = [col[0] for col in cur.description] if cur.description else []
         rows = cur.fetchall()
         return pd.DataFrame(rows, columns=columns)
-
-    def _pick_fallback_warehouse(conn) -> str | None:
-        cur = conn.cursor()
-        try:
-            cur.execute("SHOW WAREHOUSES")
-            rows = cur.fetchall()
-            cols = [c[0].lower() for c in cur.description] if cur.description else []
-            name_idx = cols.index("name") if "name" in cols else 0
-            state_idx = cols.index("state") if "state" in cols else None
-            # Prefer started, then any name not looking like blocked default
-            started = []
-            others = []
-            for row in rows:
-                name = str(row[name_idx])
-                state = str(row[state_idx]).upper() if state_idx is not None else ""
-                if state == "STARTED":
-                    started.append(name)
-                else:
-                    others.append(name)
-            for candidate in started + others:
-                if candidate.upper() != "WH_ANALISTA":
-                    return candidate
-            return (started or others or [None])[0]
-        except Exception:  # noqa: BLE001
-            return "COMPUTE_WH"
 
     with snowflake_connection(
         account=account,
@@ -229,30 +269,22 @@ def run_query(
         warehouse=warehouse,
         role=role,
     ) as conn:
-        try:
-            return _execute(conn)
-        except Exception as exc:  # noqa: BLE001
-            raw = str(exc).lower()
-            if (warehouse or "").strip():
-                raise
-            if not (
-                "resource monitor" in raw
-                or "cannot be resumed" in raw
-                or "090073" in str(exc)
-                or "no active warehouse" in raw
-                or "000606" in str(exc)
-            ):
-                raise
-            fallback = _pick_fallback_warehouse(conn)
-            if not fallback:
-                raise
+        candidates = _list_warehouse_candidates(conn, preferred)
+        if not candidates:
+            # Last attempt: run without USE (may still work for metadata-only SQL)
+            return _execute(conn, None)
+
+        last_exc: BaseException | None = None
+        for wh in candidates:
             try:
-                return _execute(conn, fallback)
-            except Exception:
-                # last resort known name
-                if fallback.upper() != "COMPUTE_WH":
-                    return _execute(conn, "COMPUTE_WH")
-                raise
+                return _execute(conn, wh)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if not _is_warehouse_session_error(exc):
+                    raise
+                continue
+        assert last_exc is not None
+        raise last_exc
 
 
 def connect_from_credentials(creds: dict) -> Any:

@@ -307,6 +307,65 @@ def delete_connection(connection_id: int) -> None:
         cur.execute("DELETE FROM connections WHERE id = %s", (connection_id,))
 
 
+def update_connection(
+    connection_id: int,
+    *,
+    name: str | None = None,
+    warehouse: str | None = None,
+    role_name: str | None = None,
+    clear_warehouse: bool = False,
+    clear_role: bool = False,
+) -> dict:
+    """Update mutable connection fields (no re-auth). Empty warehouse/role clears them."""
+    row = get_connection_by_id(connection_id)
+    if not row:
+        raise ValueError("Conexão não encontrada.")
+
+    new_name = (name if name is not None else row["name"]) or row["name"]
+    new_name = str(new_name).strip() or row["name"]
+
+    if clear_warehouse:
+        new_wh = None
+    elif warehouse is not None:
+        new_wh = warehouse.strip() or None
+    else:
+        new_wh = row.get("warehouse")
+
+    if clear_role:
+        new_role = None
+    elif role_name is not None:
+        new_role = role_name.strip() or None
+    else:
+        new_role = row.get("role_name")
+
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE connections
+            SET name = %s, warehouse = %s, role_name = %s, updated_at = NOW()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (new_name, new_wh, new_role, connection_id),
+        )
+        updated = cur.fetchone()
+    return updated
+
+
+def update_connection_secret(connection_id: int, secret: str) -> None:
+    """Re-encrypt and store OAuth/PAT secret (e.g. after token refresh)."""
+    encrypted = encrypt_secret(secret)
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE connections
+            SET pat_encrypted = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (encrypted, connection_id),
+        )
+
+
 def user_can_access_connection(user: dict, connection_id: int) -> bool:
     if user["role"] == "admin":
         return True

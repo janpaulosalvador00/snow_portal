@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { api, ApiError, setActiveConnectionId, getActiveConnectionId } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
@@ -8,6 +9,8 @@ type Conn = {
   account_identifier: string;
   username: string;
   auth_method: string;
+  warehouse?: string | null;
+  role_name?: string | null;
   team_name?: string;
 };
 
@@ -19,7 +22,6 @@ type MethodDef = {
   desc: string;
 };
 
-/** Browser OAuth first (like Cortex); PAT/password as fallback. */
 const METHODS_RECOMMENDED: MethodDef[] = [
   {
     key: "browser_oauth",
@@ -56,6 +58,10 @@ export function ConnectionsPage() {
   const [connections, setConnections] = useState<Conn[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [activeId, setActiveId] = useState<number | null>(getActiveConnectionId());
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editWarehouse, setEditWarehouse] = useState("");
+  const [editRole, setEditRole] = useState("");
   const [method, setMethod] = useState("browser_oauth");
   const [account, setAccount] = useState("");
   const [name, setName] = useState("");
@@ -117,6 +123,45 @@ export function ConnectionsPage() {
     await api(`/api/connections/${id}/activate`, { method: "POST" });
     setActiveConnectionId(id);
     setActiveId(id);
+    setMsg("Conexão ativada.");
+  }
+
+  function inactivate() {
+    setActiveConnectionId(null);
+    setActiveId(null);
+    setMsg("Conexão inativada. Cost Management exige uma conta ativa.");
+  }
+
+  function startEdit(c: Conn) {
+    setEditingId(c.id);
+    setEditName(c.name);
+    setEditWarehouse(c.warehouse || "");
+    setEditRole(c.role_name || "");
+    setErr(null);
+  }
+
+  async function saveEdit(id: number) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/api/connections/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editName.trim() || undefined,
+          warehouse: editWarehouse,
+          role_name: editRole,
+          clear_warehouse: !editWarehouse.trim(),
+          clear_role: !editRole.trim(),
+        }),
+      });
+      setEditingId(null);
+      setMsg("Conexão atualizada.");
+      await reload();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Falha ao editar conexão.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function remove(id: number) {
@@ -125,6 +170,7 @@ export function ConnectionsPage() {
       setActiveConnectionId(null);
       setActiveId(null);
     }
+    if (editingId === id) setEditingId(null);
     await reload();
   }
 
@@ -217,6 +263,9 @@ export function ConnectionsPage() {
       <h1>Conexões Snowflake</h1>
       <p className="muted">Salve contas de clientes e alterne o ambiente ativo.</p>
 
+      {err && tab === "hub" ? <div className="error-box">{err}</div> : null}
+      {msg && tab === "hub" ? <div className="success-box">{msg}</div> : null}
+
       <div className="tabs">
         <button
           type="button"
@@ -242,35 +291,90 @@ export function ConnectionsPage() {
               browser, sem PAT.
             </div>
           ) : (
-            connections.map((c) => (
-              <div key={c.id} className="row-card">
-                <div>
-                  <strong>
-                    {c.name}
-                    {activeId === c.id ? " · ativa" : ""}
-                  </strong>
-                  <div className="muted">
-                    {c.account_identifier} · {c.username} ·{" "}
-                    {METHOD_LABELS[c.auth_method] || c.auth_method}
+            connections.map((c) => {
+              const isActive = activeId === c.id;
+              const isEditing = editingId === c.id;
+              return (
+                <div key={c.id} className="row-card" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+                    <div>
+                      <strong>
+                        {c.name}
+                        {isActive ? " · ativa" : ""}
+                      </strong>
+                      <div className="muted">
+                        {c.account_identifier} · {c.username} ·{" "}
+                        {METHOD_LABELS[c.auth_method] || c.auth_method}
+                      </div>
+                      <div className="muted">
+                        WH: {c.warehouse || "(padrão da sessão / vazio)"} · Role:{" "}
+                        {c.role_name || "(padrão)"}
+                      </div>
+                    </div>
+                    <div className="row-actions">
+                      <button type="button" className="btn" onClick={() => startEdit(c)}>
+                        Editar
+                      </button>
+                      {isActive ? (
+                        <button type="button" className="btn" onClick={inactivate}>
+                          Inativar
+                        </button>
+                      ) : (
+                        <button type="button" className="btn" onClick={() => void activate(c.id)}>
+                          Ativar
+                        </button>
+                      )}
+                      {user?.role === "admin" ? (
+                        <button type="button" className="btn ghost" onClick={() => void remove(c.id)}>
+                          Remover
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-                <div className="row-actions">
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={activeId === c.id}
-                    onClick={() => void activate(c.id)}
-                  >
-                    Ativar
-                  </button>
-                  {user?.role === "admin" ? (
-                    <button type="button" className="btn ghost" onClick={() => void remove(c.id)}>
-                      Remover
-                    </button>
+                  {isEditing ? (
+                    <div className="form-stack" style={{ marginTop: "0.75rem" }}>
+                      <label>
+                        Nome
+                        <input value={editName} onChange={(e) => setEditName(e.target.value)} />
+                      </label>
+                      <label>
+                        Warehouse (vazio = não forçar WH — evita WH_ANALISTA com cota estourada)
+                        <input
+                          value={editWarehouse}
+                          onChange={(e) => setEditWarehouse(e.target.value)}
+                          placeholder="COMPUTE_WH ou vazio"
+                        />
+                      </label>
+                      <label>
+                        Role
+                        <input
+                          value={editRole}
+                          onChange={(e) => setEditRole(e.target.value)}
+                          placeholder="ACCOUNTADMIN"
+                        />
+                      </label>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="btn primary"
+                          disabled={busy}
+                          onClick={() => void saveEdit(c.id)}
+                        >
+                          Salvar
+                        </button>
+                        <button type="button" className="btn ghost" onClick={() => setEditingId(null)}>
+                          Cancelar
+                        </button>
+                      </div>
+                      <p className="muted" style={{ margin: 0 }}>
+                        Depois de ajustar WH/role, abra{" "}
+                        <Link to="/cost-management">Cost Management</Link>.
+                      </p>
+                    </div>
                   ) : null}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       ) : (

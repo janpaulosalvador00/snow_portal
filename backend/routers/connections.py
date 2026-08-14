@@ -80,6 +80,14 @@ class OAuthStart(BaseModel):
     team_id: int | None = None
 
 
+class ConnectionUpdate(BaseModel):
+    name: str | None = None
+    warehouse: str | None = None
+    role_name: str | None = None
+    clear_warehouse: bool = False
+    clear_role: bool = False
+
+
 def _serialize(row: dict) -> dict:
     return {
         "id": row["id"],
@@ -152,6 +160,30 @@ def create_connection(body: ConnectionCreate, user: dict = Depends(get_current_u
 
     row = db.get_connection_by_id(conn_id)
     return {"ok": True, "message": msg, "connection": _serialize(row)}
+
+
+@router.patch("/api/connections/{connection_id}")
+def patch_connection(
+    connection_id: int,
+    body: ConnectionUpdate,
+    user: dict = Depends(get_current_user),
+):
+    if not db.user_can_access_connection(user, connection_id):
+        raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
+    if not db.get_connection_by_id(connection_id):
+        raise HTTPException(status_code=404, detail="Conexão não encontrada.")
+    try:
+        row = db.update_connection(
+            connection_id,
+            name=body.name,
+            warehouse=body.warehouse,
+            role_name=body.role_name,
+            clear_warehouse=body.clear_warehouse,
+            clear_role=body.clear_role,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "connection": _serialize(row)}
 
 
 @router.delete("/api/connections/{connection_id}")

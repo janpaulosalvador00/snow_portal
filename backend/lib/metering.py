@@ -30,8 +30,12 @@ def _label_service(service_type: str | None) -> str:
     return SERVICE_TYPE_LABELS.get(service_type, service_type.replace("_", " ").title())
 
 
-def _consumption_sql(grain: str) -> str:
+def _consumption_sql(grain: str, *, absolute_range: bool = False) -> str:
     # grain is validated by caller; never interpolate untrusted input
+    if absolute_range:
+        time_clause = "START_TIME >= %s AND START_TIME < %s"
+    else:
+        time_clause = "START_TIME >= DATEADD('day', %s, CURRENT_TIMESTAMP())"
     return f"""
 SELECT
     COALESCE(NULLIF(TRIM(NAME), ''), SERVICE_TYPE, 'UNKNOWN') AS resource_name,
@@ -41,7 +45,7 @@ SELECT
     SUM(CREDITS_USED_COMPUTE) AS credits_compute,
     SUM(CREDITS_USED_CLOUD_SERVICES) AS credits_cloud
 FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
-WHERE START_TIME >= DATEADD('day', %s, CURRENT_TIMESTAMP())
+WHERE {time_clause}
   AND (%s IS NULL OR SERVICE_TYPE = %s)
   AND (%s IS NULL OR COALESCE(NULLIF(TRIM(NAME), ''), SERVICE_TYPE) = %s)
 GROUP BY 1, 2, 3
@@ -76,7 +80,7 @@ def fetch_consumption(
         authenticator_url=authenticator_url,
         warehouse=warehouse,
         role=role,
-        sql=_consumption_sql(grain),
+        sql=_consumption_sql(grain, absolute_range=False),
         params=(-days, service_type, service_type, resource_name, resource_name),
     )
 

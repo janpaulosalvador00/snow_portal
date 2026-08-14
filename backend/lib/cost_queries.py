@@ -36,6 +36,7 @@ def fetch_consumption_for_creds(
     grain: str = "day",
     service_type: str | None = None,
     usage_type: str = "Compute",
+    resource_name: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> pd.DataFrame:
@@ -46,6 +47,7 @@ def fetch_consumption_for_creds(
 
     if grain not in ("day", "month", "hour"):
         grain = "day"
+    res = None if not resource_name or resource_name == "All" else resource_name
 
     use_absolute = bool(start_date and end_date)
     if use_absolute:
@@ -70,13 +72,13 @@ def fetch_consumption_for_creds(
             end_exclusive.isoformat(),
             service_type,
             service_type,
-            None,
-            None,
+            res,
+            res,
         )
     else:
         days = int(days)
         sql = _consumption_sql(grain, absolute_range=False)
-        params = (-days, service_type, service_type, None, None)
+        params = (-days, service_type, service_type, res, res)
 
     df = run_query_with_creds(creds, sql, params)
     if df.empty:
@@ -96,14 +98,20 @@ def fetch_consumption_for_creds(
 
 
 def consumption_payload(df: pd.DataFrame) -> dict[str, Any]:
+    """Build chart + summary from the same filtered frame (no top-N chart-only cut)."""
+    if df.empty:
+        return {"total_credits": 0, "summary": [], "chart": []}
+    # Drop rows that the Usage Type filter zeroed out (e.g. cloud-only under Compute).
+    df = df[df["credits_display"].fillna(0).astype(float) > 1e-12].copy()
     if df.empty:
         return {"total_credits": 0, "summary": [], "chart": []}
     summary = summarize_by_resource(df)
     chart = chart_frame(df)
+    # Chart and table must share the same resource set (API filters already applied).
+    names = set(summary["resource_name"].tolist())
+    if names:
+        chart = chart[chart["resource_name"].isin(names)]
     total = float(summary["credits_used"].sum())
-    top = summary.head(12)["resource_name"].tolist()
-    if top:
-        chart = chart[chart["resource_name"].isin(top)]
 
     def _row_summary(r):
         return {
@@ -128,9 +136,33 @@ def consumption_payload(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def account_overview(creds: dict, *, days: int = 28) -> dict[str, Any]:
-    df = fetch_consumption_for_creds(creds, days=days, grain="day", usage_type="All")
+def account_overview(
+    creds: dict,
+    *,
+    days: int = 28,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
+    df = fetch_consumption_for_creds(
+        creds,
+        days=days,
+        grain="day",
+        usage_type="All",
+        start_date=start_date,
+        end_date=end_date,
+    )
     total = float(df["credits_display"].sum()) if not df.empty else 0.0
+    if start_date and end_date:
+        try:
+            from datetime import date as date_cls
+
+            span = (
+                date_cls.fromisoformat(end_date[:10])
+                - date_cls.fromisoformat(start_date[:10])
+            ).days + 1
+            days = max(1, span)
+        except ValueError:
+            pass
     by_service: list[dict] = []
     if not df.empty:
         g = (
@@ -177,9 +209,22 @@ def account_overview(creds: dict, *, days: int = 28) -> dict[str, Any]:
     }
 
 
-def anomalies(creds: dict, *, days: int = 28) -> dict[str, Any]:
+def anomalies(
+    creds: dict,
+    *,
+    days: int = 28,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
     """Daily credit series with expected range (rolling mean ± 2·std) and outlier points."""
-    df = fetch_consumption_for_creds(creds, days=days, grain="day", usage_type="All")
+    df = fetch_consumption_for_creds(
+        creds,
+        days=days,
+        grain="day",
+        usage_type="All",
+        start_date=start_date,
+        end_date=end_date,
+    )
     if df.empty:
         return {
             "series": [],
@@ -408,23 +453,54 @@ def budgets(creds: dict) -> dict[str, Any]:
     return {"items": items, "note": None}
 
 
-def organization_overview(creds: dict, *, days: int = 28) -> dict[str, Any]:
+def organization_overview(
+    creds: dict,
+    *,
+    days: int = 28,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
     try:
-        df = run_query_with_creds(
-            creds,
-            """
-            SELECT
-                USAGE_DATE,
-                ACCOUNT_NAME,
-                SUM(CREDITS_USED) AS credits_used
-            FROM SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY
-            WHERE USAGE_DATE >= DATEADD('day', %s, CURRENT_DATE())
-            GROUP BY 1, 2
-            ORDER BY USAGE_DATE DESC
-            LIMIT 500
-            """,
-            (-int(days),),
-        )
+        if start_date and end_date:
+            from datetime import date as date_cls
+
+            start_d = date_cls.fromisoformat(start_date[:10])
+            end_d = date_cls.fromisoformat(end_date[:10])
+            if end_d < start_d:
+                raise ValueError("end_date deve ser >= start_date.")
+            df = run_query_with_creds(
+                creds,
+                """
+                SELECT
+                    USAGE_DATE,
+                    ACCOUNT_NAME,
+                    SUM(CREDITS_USED) AS credits_used
+                FROM SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY
+                WHERE USAGE_DATE >= %s AND USAGE_DATE <= %s
+                GROUP BY 1, 2
+                ORDER BY USAGE_DATE DESC
+                LIMIT 500
+                """,
+                (start_d.isoformat(), end_d.isoformat()),
+            )
+        else:
+            df = run_query_with_creds(
+                creds,
+                """
+                SELECT
+                    USAGE_DATE,
+                    ACCOUNT_NAME,
+                    SUM(CREDITS_USED) AS credits_used
+                FROM SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY
+                WHERE USAGE_DATE >= DATEADD('day', %s, CURRENT_DATE())
+                GROUP BY 1, 2
+                ORDER BY USAGE_DATE DESC
+                LIMIT 500
+                """,
+                (-int(days),),
+            )
+    except ValueError:
+        raise
     except Exception as exc:  # noqa: BLE001
         return {
             "available": False,

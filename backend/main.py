@@ -20,7 +20,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="snow_portal", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Snow Portal", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

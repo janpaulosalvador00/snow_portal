@@ -57,3 +57,11 @@ export async function api<T>(
   }
   return data as T;
 }
+
+/** True when fetch was cancelled via AbortController (ignore in UI). */
+export function isAbortError(e: unknown): boolean {
+  return (
+    (e instanceof DOMException && e.name === "AbortError") ||
+    (e instanceof Error && e.name === "AbortError")
+  );
+}

@@ -115,6 +115,17 @@ h3 {
   text-decoration: none;
   padding: 0.55rem 0.7rem;
   border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  width: 100%;
+  text-align: left;
+}
+
+.nav-icon {
+  flex-shrink: 0;
+  opacity: 0.9;
 }
 
 .sidebar nav a.active,
@@ -125,6 +136,17 @@ h3 {
 
 .logout {
   margin-top: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+}
+
+.logout-icon {
+  flex-shrink: 0;
+  opacity: 0.9;
 }
 
 .main {

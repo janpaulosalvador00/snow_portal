@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { api, ApiError, setActiveConnectionId, getActiveConnectionId } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
@@ -8,6 +9,8 @@ type Conn = {
   account_identifier: string;
   username: string;
   auth_method: string;
+  warehouse?: string | null;
+  role_name?: string | null;
   team_name?: string;
 };
 
@@ -19,7 +22,6 @@ type MethodDef = {
   desc: string;
 };
 
-/** Browser OAuth first (like Cortex); PAT/password as fallback. */
 const METHODS_RECOMMENDED: MethodDef[] = [
   {
     key: "browser_oauth",
@@ -56,6 +58,15 @@ export function ConnectionsPage() {
   const [connections, setConnections] = useState<Conn[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [activeId, setActiveId] = useState<number | null>(getActiveConnectionId());
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editAccount, setEditAccount] = useState("");
+  const [editUser, setEditUser] = useState("");
+  const [editMethod, setEditMethod] = useState("browser_oauth");
+  const [editSecret, setEditSecret] = useState("");
+  const [editWarehouse, setEditWarehouse] = useState("");
+  const [editRole, setEditRole] = useState("");
+  const editSecretRef = useRef<HTMLInputElement>(null);
   const [method, setMethod] = useState("browser_oauth");
   const [account, setAccount] = useState("");
   const [name, setName] = useState("");
@@ -83,6 +94,20 @@ export function ConnectionsPage() {
       .catch(() => setTeams([]));
   }, []);
 
+  // Deep-link from Cost Management: /conexoes?edit=<id>
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const editRaw = params.get("edit");
+    if (!editRaw || !connections.length) return;
+    const editId = Number(editRaw);
+    if (!editId) return;
+    const target = connections.find((c) => c.id === editId);
+    if (!target) return;
+    setTab("hub");
+    startEdit(target);
+    window.history.replaceState({}, "", "/conexoes");
+  }, [connections]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauth = params.get("oauth");
@@ -91,7 +116,11 @@ export function ConnectionsPage() {
       const id = Number(params.get("connection_id") || "");
       setTab("hub");
       setBusy(false);
-      setMsg("Login Snowflake via browser concluído. Conexão salva e pronta para uso.");
+      setMsg(
+        id
+          ? "Login Snowflake via browser concluído. Conexão atualizada e autenticada."
+          : "Login Snowflake via browser concluído. Conexão salva e pronta para uso.",
+      );
       setErr(null);
       void reload().then(() => {
         if (id) {
@@ -117,6 +146,113 @@ export function ConnectionsPage() {
     await api(`/api/connections/${id}/activate`, { method: "POST" });
     setActiveConnectionId(id);
     setActiveId(id);
+    setMsg("Conexão ativada.");
+  }
+
+  function inactivate() {
+    setActiveConnectionId(null);
+    setActiveId(null);
+    setMsg("Conexão inativada. Cost Management exige uma conta ativa.");
+  }
+
+  function startEdit(c: Conn) {
+    setEditingId(c.id);
+    setEditName(c.name);
+    setEditAccount(c.account_identifier);
+    setEditUser(c.username);
+    const m = c.auth_method === "oauth" || c.auth_method === "local_oauth" ? "browser_oauth" : c.auth_method;
+    setEditMethod(m === "pat" || m === "password" ? m : "browser_oauth");
+    setEditSecret("");
+    setEditWarehouse(c.warehouse || "");
+    setEditRole(c.role_name || "");
+    setErr(null);
+    setMsg(null);
+  }
+
+  async function reconnectEditOAuth(id: number) {
+    if (!editAccount.trim() || !editUser.trim()) {
+      setErr("Preencha Account Identifier e Username.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await api<{ authorize_url: string }>("/api/connections/oauth/start", {
+        method: "POST",
+        body: JSON.stringify({
+          connection_id: id,
+          account_identifier: editAccount.trim(),
+          username: editUser.trim(),
+          name: editName.trim() || null,
+          warehouse: editWarehouse.trim() || null,
+          role_name: editRole.trim() || null,
+          team_id: teamId === "" ? null : Number(teamId),
+        }),
+      });
+      setMsg("Reconectando via browser…");
+      window.location.href = res.authorize_url;
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Falha ao iniciar OAuth.");
+      setBusy(false);
+    }
+  }
+
+  async function saveEdit(id: number, testOnly: boolean) {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    if (editMethod === "browser_oauth") {
+      await reconnectEditOAuth(id);
+      return;
+    }
+    const resolvedSecret = (editSecret || editSecretRef.current?.value || "").trim();
+    if (!resolvedSecret) {
+      setErr(editMethod === "pat" ? "Cole o novo PAT para revalidar." : "Informe a senha para revalidar.");
+      setBusy(false);
+      editSecretRef.current?.focus();
+      return;
+    }
+    const payload = {
+      name: editName.trim() || undefined,
+      account_identifier: editAccount.trim(),
+      username: editUser.trim(),
+      auth_method: editMethod,
+      secret: resolvedSecret,
+      warehouse: editWarehouse,
+      role_name: editRole,
+      clear_warehouse: !editWarehouse.trim(),
+      clear_role: !editRole.trim(),
+      revalidate: true,
+    };
+    try {
+      if (testOnly) {
+        const res = await api<{ message: string }>("/api/connections/test", {
+          method: "POST",
+          body: JSON.stringify({
+            account_identifier: payload.account_identifier,
+            username: payload.username,
+            auth_method: payload.auth_method,
+            secret: payload.secret,
+            warehouse: editWarehouse.trim() || null,
+            role_name: editRole.trim() || null,
+          }),
+        });
+        setMsg(res.message);
+      } else {
+        const res = await api<{ message: string; connection: Conn }>(`/api/connections/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        setEditingId(null);
+        setEditSecret("");
+        setMsg(res.message || "Conexão atualizada e autenticada.");
+        await reload();
+      }
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Falha ao editar/revalidar conexão.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function remove(id: number) {
@@ -125,6 +261,7 @@ export function ConnectionsPage() {
       setActiveConnectionId(null);
       setActiveId(null);
     }
+    if (editingId === id) setEditingId(null);
     await reload();
   }
 
@@ -217,6 +354,9 @@ export function ConnectionsPage() {
       <h1>Conexões Snowflake</h1>
       <p className="muted">Salve contas de clientes e alterne o ambiente ativo.</p>
 
+      {err && tab === "hub" ? <div className="error-box">{err}</div> : null}
+      {msg && tab === "hub" ? <div className="success-box">{msg}</div> : null}
+
       <div className="tabs">
         <button
           type="button"
@@ -242,35 +382,165 @@ export function ConnectionsPage() {
               browser, sem PAT.
             </div>
           ) : (
-            connections.map((c) => (
-              <div key={c.id} className="row-card">
-                <div>
-                  <strong>
-                    {c.name}
-                    {activeId === c.id ? " · ativa" : ""}
-                  </strong>
-                  <div className="muted">
-                    {c.account_identifier} · {c.username} ·{" "}
-                    {METHOD_LABELS[c.auth_method] || c.auth_method}
+            connections.map((c) => {
+              const isActive = activeId === c.id;
+              const isEditing = editingId === c.id;
+              return (
+                <div key={c.id} className="row-card" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+                    <div>
+                      <strong>
+                        {c.name}
+                        {isActive ? " · ativa" : ""}
+                      </strong>
+                      <div className="muted">
+                        {c.account_identifier} · {c.username} ·{" "}
+                        {METHOD_LABELS[c.auth_method] || c.auth_method}
+                      </div>
+                      <div className="muted">
+                        WH: {c.warehouse || "(padrão da sessão / vazio)"} · Role:{" "}
+                        {c.role_name || "(padrão)"}
+                      </div>
+                    </div>
+                    <div className="row-actions">
+                      <button type="button" className="btn" onClick={() => startEdit(c)}>
+                        Editar
+                      </button>
+                      {isActive ? (
+                        <button type="button" className="btn" onClick={inactivate}>
+                          Inativar
+                        </button>
+                      ) : (
+                        <button type="button" className="btn" onClick={() => void activate(c.id)}>
+                          Ativar
+                        </button>
+                      )}
+                      {user?.role === "admin" ? (
+                        <button type="button" className="btn ghost" onClick={() => void remove(c.id)}>
+                          Remover
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-                <div className="row-actions">
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={activeId === c.id}
-                    onClick={() => void activate(c.id)}
-                  >
-                    Ativar
-                  </button>
-                  {user?.role === "admin" ? (
-                    <button type="button" className="btn ghost" onClick={() => void remove(c.id)}>
-                      Remover
-                    </button>
+                  {isEditing ? (
+                    <div className="form-stack" style={{ marginTop: "0.75rem" }}>
+                      <div className="info-box">
+                        Revalide como um cadastro novo: altere os campos e autentique de novo
+                        (Browser OAuth ou PAT/senha).
+                      </div>
+                      <label>
+                        Method
+                        <select value={editMethod} onChange={(e) => setEditMethod(e.target.value)}>
+                          {METHODS_RECOMMENDED.map((m) => (
+                            <option key={m.key} value={m.key}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Account Identifier *
+                        <input
+                          value={editAccount}
+                          onChange={(e) => setEditAccount(e.target.value)}
+                          required
+                        />
+                      </label>
+                      <label>
+                        Nome
+                        <input value={editName} onChange={(e) => setEditName(e.target.value)} />
+                      </label>
+                      <label>
+                        Username *
+                        <input
+                          value={editUser}
+                          onChange={(e) => setEditUser(e.target.value)}
+                          required
+                        />
+                      </label>
+                      {editMethod === "pat" || editMethod === "password" ? (
+                        <label>
+                          {editMethod === "pat" ? "Programmatic Access Token *" : "Password *"}
+                          <input
+                            ref={editSecretRef}
+                            type="password"
+                            value={editSecret}
+                            onChange={(e) => setEditSecret(e.target.value)}
+                            placeholder="Obrigatório para revalidar"
+                            required
+                          />
+                        </label>
+                      ) : (
+                        <div className="warn-box">
+                          Browser OAuth: ao salvar, o login Snowflake abre no browser e substitui o
+                          token desta conexão.
+                        </div>
+                      )}
+                      <label>
+                        Warehouse (vazio = auto / evita WH com cota estourada)
+                        <input
+                          value={editWarehouse}
+                          onChange={(e) => setEditWarehouse(e.target.value)}
+                          placeholder="COMPUTE_WH ou vazio"
+                        />
+                      </label>
+                      <label>
+                        Role
+                        <input
+                          value={editRole}
+                          onChange={(e) => setEditRole(e.target.value)}
+                          placeholder="ACCOUNTADMIN"
+                        />
+                      </label>
+                      <div className="row-actions">
+                        {editMethod === "browser_oauth" ? (
+                          <button
+                            type="button"
+                            className="btn primary"
+                            disabled={busy}
+                            onClick={() => void saveEdit(c.id, false)}
+                          >
+                            Reconectar via browser
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={busy}
+                              onClick={() => void saveEdit(c.id, true)}
+                            >
+                              Testar conexão
+                            </button>
+                            <button
+                              type="button"
+                              className="btn primary"
+                              disabled={busy}
+                              onClick={() => void saveEdit(c.id, false)}
+                            >
+                              Salvar e revalidar
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => {
+                            setEditingId(null);
+                            setEditSecret("");
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                      <p className="muted" style={{ margin: 0 }}>
+                        Depois de autenticar, abra <Link to="/cost-management">Cost Management</Link>.
+                      </p>
+                    </div>
                   ) : null}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       ) : (

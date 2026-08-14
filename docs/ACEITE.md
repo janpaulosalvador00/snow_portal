@@ -1,4 +1,6 @@
-# Checklist de aceite — snow_portal (React + FastAPI)
+# Checklist de aceite — snow_portal
+
+## Onda 1 — Fundação + conexão
 
 - [x] Stack React + FastAPI + Postgres (sem Streamlit)
 - [x] Sem sessão → somente tela de login
@@ -8,4 +10,15 @@
 - [x] PAT / Password como fallback; token OAuth criptografado em Postgres
 - [x] Runbook `docs/CONECTAR_PAT.md` para PONCETECH_PARTNER
 - [x] Docker: `OAUTH_REDIRECT_URI` + `PORTAL_PUBLIC_URL` no compose
-- [ ] Conectar conta Snowflake real (Browser OAuth ou PAT) e ver Consumption *(ação do operador)*
+
+## Onda 2 — Cost Management completo
+
+- [x] Contas salvas: **Editar**, **Inativar**, **Ativar**, **Remover**
+- [x] `PATCH /api/connections/{id}` (name / warehouse / role)
+- [x] Warehouse vazio não força WH default (evita resource monitor)
+- [x] Refresh automático de token OAuth nas leituras
+- [x] APIs `/api/cost/*` para as 6 abas
+- [x] Consumption + Account Overview + Anomalies + Resource Monitors + Budgets + Organization Overview (dados ou empty-state)
+- [x] Hub alinhado a OAuth + conta ativa/inativa
+- [x] `docs/ROADMAP.md`
+- [ ] Validar Consumption com conta real após Editar WH (ação do operador)

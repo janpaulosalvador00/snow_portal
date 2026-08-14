@@ -327,7 +327,7 @@ select:focus {
 .table-head,
 .table-row {
   display: grid;
-  grid-template-columns: 2fr 1.4fr 0.8fr 1.6fr;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 0.5rem;
   padding: 0.65rem 0.85rem;
   align-items: center;

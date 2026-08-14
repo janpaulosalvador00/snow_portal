@@ -78,6 +78,21 @@ class OAuthStart(BaseModel):
     warehouse: str | None = None
     role_name: str | None = None
     team_id: int | None = None
+    connection_id: int | None = None
+
+
+class ConnectionUpdate(BaseModel):
+    name: str | None = None
+    account_identifier: str | None = None
+    username: str | None = None
+    auth_method: str | None = None
+    secret: str | None = None
+    authenticator_url: str | None = None
+    warehouse: str | None = None
+    role_name: str | None = None
+    clear_warehouse: bool = False
+    clear_role: bool = False
+    revalidate: bool = True
 
 
 def _serialize(row: dict) -> dict:
@@ -154,6 +169,80 @@ def create_connection(body: ConnectionCreate, user: dict = Depends(get_current_u
     return {"ok": True, "message": msg, "connection": _serialize(row)}
 
 
+@router.patch("/api/connections/{connection_id}")
+def patch_connection(
+    connection_id: int,
+    body: ConnectionUpdate,
+    user: dict = Depends(get_current_user),
+):
+    if not db.user_can_access_connection(user, connection_id):
+        raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
+    existing = db.get_connection_by_id(connection_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Conexão não encontrada.")
+
+    method = body.auth_method or existing.get("auth_method") or "pat"
+    if method == "browser_oauth":
+        method = "oauth"
+
+    message = "Conexão atualizada."
+    # Full revalidation like a new signup (PAT/password require secret)
+    if body.revalidate and method in ("pat", "password"):
+        if not body.secret:
+            raise HTTPException(
+                status_code=400,
+                detail="Informe PAT/senha para revalidar a autenticação.",
+            )
+        ok, msg = test_connection(
+            account=body.account_identifier or existing["account_identifier"],
+            user=body.username or existing["username"],
+            auth_method=method,
+            password=body.secret,
+            authenticator_url=body.authenticator_url,
+            warehouse=None
+            if body.clear_warehouse
+            else (
+                body.warehouse
+                if body.warehouse is not None
+                else existing.get("warehouse")
+            ),
+            role=None
+            if body.clear_role
+            else (
+                body.role_name if body.role_name is not None else existing.get("role_name")
+            ),
+        )
+        if not ok:
+            raise HTTPException(status_code=400, detail=msg)
+        message = msg
+    elif body.revalidate and method in ("oauth", "local_oauth"):
+        raise HTTPException(
+            status_code=400,
+            detail="Para revalidar Browser OAuth, use 'Reconectar via browser' (não PATCH com secret).",
+        )
+
+    try:
+        row = db.update_connection(
+            connection_id,
+            name=body.name,
+            account_identifier=body.account_identifier,
+            username=body.username,
+            auth_method=method,
+            secret=body.secret,
+            authenticator_url=body.authenticator_url,
+            warehouse=body.warehouse,
+            role_name=body.role_name,
+            clear_warehouse=body.clear_warehouse,
+            clear_role=body.clear_role,
+            update_secret=bool(body.secret)
+            and method in ("pat", "password", "oauth", "local_oauth"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"ok": True, "message": message, "connection": _serialize(row)}
+
+
 @router.delete("/api/connections/{connection_id}")
 def delete_connection(connection_id: int, user: dict = Depends(get_current_user)):
     if user["role"] != "admin":
@@ -178,6 +267,11 @@ def activate_connection(connection_id: int, user: dict = Depends(get_current_use
 def oauth_start(body: OAuthStart, user: dict = Depends(get_current_user)):
     """Start Snowflake Local Application OAuth (browser login like Cortex)."""
     team_id = body.team_id or user.get("team_id")
+    if body.connection_id is not None:
+        if not db.user_can_access_connection(user, body.connection_id):
+            raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
+        if not db.get_connection_by_id(body.connection_id):
+            raise HTTPException(status_code=404, detail="Conexão não encontrada.")
     try:
         started = oauth_local.create_oauth_pending(
             portal_user_id=user["id"],
@@ -187,6 +281,7 @@ def oauth_start(body: OAuthStart, user: dict = Depends(get_current_user)):
             warehouse=body.warehouse,
             role_name=body.role_name,
             team_id=team_id,
+            connection_id=body.connection_id,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -270,18 +365,35 @@ def oauth_callback(
             )
 
         team_id = pending.get("team_id")
-        conn_id = db.create_connection(
-            name=pending.get("name") or pending["account"],
-            account_identifier=pending["account"],
-            username=username,
-            auth_method="oauth",
-            secret=secret,
-            warehouse=pending.get("warehouse"),
-            role_name=pending.get("role_name"),
-            created_by=pending["portal_user_id"],
-            team_id=team_id,
-            acl_team_ids=[team_id] if team_id else [],
-        )
+        existing_id = pending.get("connection_id")
+        if existing_id:
+            db.update_connection(
+                int(existing_id),
+                name=pending.get("name") or pending["account"],
+                account_identifier=pending["account"],
+                username=username,
+                auth_method="oauth",
+                secret=secret,
+                warehouse=pending.get("warehouse"),
+                role_name=pending.get("role_name"),
+                clear_warehouse=not pending.get("warehouse"),
+                clear_role=not pending.get("role_name"),
+                update_secret=True,
+            )
+            conn_id = int(existing_id)
+        else:
+            conn_id = db.create_connection(
+                name=pending.get("name") or pending["account"],
+                account_identifier=pending["account"],
+                username=username,
+                auth_method="oauth",
+                secret=secret,
+                warehouse=pending.get("warehouse"),
+                role_name=pending.get("role_name"),
+                created_by=pending["portal_user_id"],
+                team_id=team_id,
+                acl_team_ids=[team_id] if team_id else [],
+            )
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
         return _oauth_result_page(

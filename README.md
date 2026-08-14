@@ -39,8 +39,10 @@ cd frontend && npm install && npm run dev   # :5173 com proxy /api
 - PAT/senha criptografados em Postgres
 - `.env` fora do git
 
-## Por que o Cortex autentica e o portal não
+## Auth Snowflake
 
-Use **Browser OAuth (como Cortex)** no portal: abre o login Snowflake no browser (`SNOWFLAKE$LOCAL_APPLICATION`) e salva o token. Callback em `http://127.0.0.1:8000` (igual aos drivers).
+Preferência: **Conectar via browser** (OAuth local `SNOWFLAKE$LOCAL_APPLICATION`, callback em `http://127.0.0.1:8000`). Alternativa: PAT — guia [`docs/CONECTAR_PAT.md`](docs/CONECTAR_PAT.md).
 
-PAT continua disponível como alternativa. Guia: [`docs/CONECTAR_PAT.md`](docs/CONECTAR_PAT.md).
+Em **Conexões → Contas salvas**: Editar (warehouse/role), Ativar, Inativar, Remover. Warehouse vazio evita WH default bloqueado por resource monitor; a API tenta um WH disponível automaticamente.
+
+Roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md).

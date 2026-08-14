@@ -12,10 +12,13 @@ type Conn = {
 export function HubPage() {
   const { user } = useAuth();
   const [connections, setConnections] = useState<Conn[]>([]);
-  const activeId = getActiveConnectionId();
+  const [activeId, setActiveId] = useState<number | null>(getActiveConnectionId());
 
   useEffect(() => {
-    void api<Conn[]>("/api/connections").then(setConnections).catch(() => setConnections([]));
+    void api<Conn[]>("/api/connections")
+      .then(setConnections)
+      .catch(() => setConnections([]));
+    setActiveId(getActiveConnectionId());
   }, []);
 
   const active = connections.find((c) => c.id === activeId);
@@ -36,18 +39,22 @@ export function HubPage() {
         </div>
         <div className="metric">
           <span className="muted">Conta ativa</span>
-          <strong>{active ? active.name : "Não"}</strong>
+          <strong>{active ? active.name : "Nenhuma"}</strong>
         </div>
       </div>
 
       <h2>Próximos passos</h2>
       <ol>
         <li>
-          Abra <Link to="/conexoes">Conexões</Link> e adicione uma conta Snowflake (PAT).
+          Abra <Link to="/conexoes">Conexões</Link> e use{" "}
+          <strong>Browser OAuth (como Cortex)</strong> ou PAT.
         </li>
-        <li>Ative a conexão desejada.</li>
         <li>
-          Vá em <Link to="/cost-management">Cost Management</Link> para ver o consumo de créditos.
+          <strong>Ative</strong> a conta (ou <strong>Inative</strong> quando não for usar).{" "}
+          <strong>Edite</strong> warehouse/role se Consumption falhar por cota de WH.
+        </li>
+        <li>
+          Vá em <Link to="/cost-management">Cost Management</Link> (Consumption e demais abas).
         </li>
       </ol>
 
@@ -56,7 +63,9 @@ export function HubPage() {
           Conta ativa: <strong>{active.name}</strong> ({active.account_identifier})
         </div>
       ) : connections.length ? (
-        <div className="info-box">Nenhuma conta ativa. Selecione uma em Conexões.</div>
+        <div className="info-box">
+          Nenhuma conta ativa. Selecione <strong>Ativar</strong> em Conexões.
+        </div>
       ) : (
         <div className="warn-box">Nenhuma conexão cadastrada ainda.</div>
       )}

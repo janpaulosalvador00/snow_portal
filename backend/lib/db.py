@@ -307,6 +307,114 @@ def delete_connection(connection_id: int) -> None:
         cur.execute("DELETE FROM connections WHERE id = %s", (connection_id,))
 
 
+def update_connection(
+    connection_id: int,
+    *,
+    name: str | None = None,
+    account_identifier: str | None = None,
+    username: str | None = None,
+    auth_method: str | None = None,
+    secret: str | None = None,
+    authenticator_url: str | None = None,
+    warehouse: str | None = None,
+    role_name: str | None = None,
+    clear_warehouse: bool = False,
+    clear_role: bool = False,
+    update_secret: bool = False,
+) -> dict:
+    """Update connection fields; optionally replace credentials (re-auth)."""
+    row = get_connection_by_id(connection_id)
+    if not row:
+        raise ValueError("Conexão não encontrada.")
+
+    new_name = (name if name is not None else row["name"]) or row["name"]
+    new_name = str(new_name).strip() or row["name"]
+
+    new_account = (
+        normalize_account_identifier(account_identifier)
+        if account_identifier is not None
+        else row["account_identifier"]
+    )
+    new_user = username.strip() if username is not None else row["username"]
+    new_method = auth_method if auth_method is not None else (row.get("auth_method") or "pat")
+    if new_method == "browser_oauth":
+        new_method = "oauth"
+    if new_method not in AUTH_METHODS:
+        raise ValueError(f"auth_method inválido: {new_method}")
+
+    new_url = row.get("authenticator_url")
+    if authenticator_url is not None:
+        new_url = (authenticator_url or "").strip() or None
+
+    if clear_warehouse:
+        new_wh = None
+    elif warehouse is not None:
+        new_wh = warehouse.strip() or None
+    else:
+        new_wh = row.get("warehouse")
+
+    if clear_role:
+        new_role = None
+    elif role_name is not None:
+        new_role = role_name.strip() or None
+    else:
+        new_role = row.get("role_name")
+
+    encrypted = row.get("pat_encrypted")
+    if update_secret:
+        if new_method in ("pat", "password", "oauth", "local_oauth"):
+            if not secret:
+                raise ValueError("Credencial obrigatória para revalidar este método.")
+            encrypted = encrypt_secret(secret)
+        else:
+            encrypted = None
+
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE connections
+            SET name = %s,
+                account_identifier = %s,
+                username = %s,
+                auth_method = %s,
+                authenticator_url = %s,
+                pat_encrypted = %s,
+                warehouse = %s,
+                role_name = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                new_name,
+                new_account,
+                new_user,
+                new_method,
+                new_url,
+                encrypted,
+                new_wh,
+                new_role,
+                connection_id,
+            ),
+        )
+        updated = cur.fetchone()
+    return updated
+
+
+def update_connection_secret(connection_id: int, secret: str) -> None:
+    """Re-encrypt and store OAuth/PAT secret (e.g. after token refresh)."""
+    encrypted = encrypt_secret(secret)
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE connections
+            SET pat_encrypted = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (encrypted, connection_id),
+        )
+
+
 def user_can_access_connection(user: dict, connection_id: int) -> bool:
     if user["role"] == "admin":
         return True

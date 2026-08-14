@@ -239,9 +239,16 @@ export function CostManagementPage() {
       setOrg(null);
       setErr(e instanceof ApiError ? e.message : "Falha ao carregar Cost Management.");
     } finally {
-      if (!signal.aborted) setLoading(false);
+      // Only the latest in-flight request may clear the spinner (aborts leave loading on).
+      if (loadAbortRef.current === ac) setLoading(false);
     }
   }
+
+  // Stable filter key — avoid re-running when dateRange object identity churns.
+  const dateKey =
+    dateRange.mode === "preset"
+      ? `p:${dateRange.days}`
+      : `c:${dateRange.start}:${dateRange.end}`;
 
   // Load on tab/connection and whenever filters that hit the API change.
   // Resources / By Day|Month still adjust the last response client-side.
@@ -252,7 +259,7 @@ export function CostManagementPage() {
       loadAbortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, tab, dateRange, usageType, serviceType]);
+  }, [connectionId, tab, dateKey, usageType, serviceType]);
 
   // Changing Service Type invalidates resource picks from other service types.
   useEffect(() => {

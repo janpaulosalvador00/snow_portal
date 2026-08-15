@@ -1,0 +1,93 @@
+erDiagram
+  teams ||--o{ users : "tem"
+  teams ||--o{ connections : "dono_opcional"
+  teams ||--o{ connection_acl : "acesso"
+  teams ||--o{ notification_channels : "responsavel"
+
+  users ||--o| user_preferences : "prefs"
+  users ||--o{ connections : "criou"
+  users ||--o{ notification_channels : "criou"
+  users ||--o{ user_alert_card_prefs : "intervalos"
+
+  connections ||--o{ connection_acl : "compartilha"
+  connections ||--o{ user_alert_card_prefs : "por_conta"
+  connections ||--o| user_preferences : "ativa"
+
+  notification_channels ||--o{ notification_channel_events : "inscreve"
+
+  teams {
+    int id PK
+    varchar name UK
+    timestamptz created_at
+  }
+
+  users {
+    int id PK
+    varchar username UK
+    text password_hash
+    varchar role
+    int team_id FK
+    boolean is_active
+    timestamptz created_at
+  }
+
+  connections {
+    int id PK
+    varchar name
+    varchar account_identifier
+    varchar username
+    varchar auth_method
+    varchar authenticator_url
+    text pat_encrypted
+    varchar warehouse
+    varchar role_name
+    int created_by FK
+    int team_id FK
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  connection_acl {
+    int connection_id PK_FK
+    int team_id PK_FK
+  }
+
+  oauth_pending {
+    varchar state PK
+    jsonb payload
+    timestamptz created_at
+  }
+
+  user_preferences {
+    int user_id PK_FK
+    int active_connection_id FK
+    int alerts_global_interval_sec
+    timestamptz updated_at
+  }
+
+  user_alert_card_prefs {
+    int user_id PK_FK
+    int connection_id PK_FK
+    int interval_sec
+    timestamptz updated_at
+  }
+
+  notification_channels {
+    int id PK
+    varchar name
+    varchar provider
+    varchar destination
+    text webhook_encrypted
+    int team_id FK
+    boolean is_active
+    timestamptz last_delivery_at
+    boolean last_ok
+    int created_by FK
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  notification_channel_events {
+    int channel_id PK_FK
+    varchar event_key PK
+  }

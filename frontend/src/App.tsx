@@ -4,6 +4,7 @@ import { AppShell } from "./components/AppShell";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AdminPage } from "./pages/AdminPage";
 import { AlertsPage } from "./pages/AlertsPage";
+import { ChannelsPage } from "./pages/ChannelsPage";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { CostManagementPage } from "./pages/CostManagementPage";
 import { HubPage } from "./pages/HubPage";
@@ -13,6 +14,12 @@ function AdminGate() {
   const { user } = useAuth();
   if (user?.role !== "admin") return <Navigate to="/" replace />;
   return <AdminPage />;
+}
+
+function ChannelsGate() {
+  const { user } = useAuth();
+  if (user?.role !== "admin") return <Navigate to="/" replace />;
+  return <ChannelsPage />;
 }
 
 function RootRedirect() {
@@ -40,6 +47,7 @@ export default function App() {
               <Route path="/cost-management" element={<CostManagementPage />} />
               <Route path="/alerts" element={<AlertsPage />} />
               <Route path="/admin" element={<AdminGate />} />
+              <Route path="/canais" element={<ChannelsGate />} />
             </Route>
           </Route>
           <Route path="*" element={<RootRedirect />} />

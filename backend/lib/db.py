@@ -53,6 +53,15 @@ def verify_password(password: str, password_hash: str) -> bool:
 def ensure_schema() -> None:
     """Apply additive migrations for existing databases."""
     with db_cursor(commit=True) as cur:
+        # Canonical public/stored roles. Existing analyst rows become suporte.
+        cur.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check")
+        cur.execute("UPDATE users SET role = 'suporte' WHERE role = 'analyst'")
+        cur.execute(
+            """
+            ALTER TABLE users
+            ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'suporte'))
+            """
+        )
         cur.execute(
             """
             ALTER TABLE connections
@@ -99,6 +108,58 @@ def ensure_schema() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_oauth_pending_created
             ON oauth_pending(created_at)
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notification_channels (
+                id                  SERIAL PRIMARY KEY,
+                name                VARCHAR(200) NOT NULL,
+                provider            VARCHAR(32) NOT NULL
+                                    CHECK (provider IN ('teams', 'slack', 'gchat')),
+                destination         VARCHAR(200),
+                webhook_encrypted   TEXT NOT NULL,
+                team_id             INT REFERENCES teams(id) ON DELETE SET NULL,
+                is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+                last_delivery_at    TIMESTAMPTZ,
+                last_ok             BOOLEAN,
+                created_by          INT REFERENCES users(id) ON DELETE SET NULL,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notification_channel_events (
+                channel_id  INT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+                event_key   VARCHAR(64) NOT NULL,
+                PRIMARY KEY (channel_id, event_key)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notification_deliveries (
+                id          BIGSERIAL PRIMARY KEY,
+                channel_id  INT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+                event_key   VARCHAR(64) NOT NULL DEFAULT 'test',
+                ok          BOOLEAN NOT NULL,
+                detail      VARCHAR(500),
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_notification_channels_team
+            ON notification_channels(team_id)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_notification_deliveries_created
+            ON notification_deliveries(created_at)
             """
         )
 
@@ -525,3 +586,208 @@ def user_can_access_connection(user: dict, connection_id: int) -> bool:
         return True
     allowed = {c["id"] for c in list_connections_for_user(user)}
     return connection_id in allowed
+
+
+def list_notification_channels() -> list[dict]:
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.id, c.name, c.provider, c.destination, c.team_id,
+                   c.is_active, c.last_delivery_at, c.last_ok,
+                   c.created_by, c.created_at, c.updated_at,
+                   t.name AS team_name,
+                   COALESCE(
+                       array_agg(e.event_key ORDER BY e.event_key)
+                       FILTER (WHERE e.event_key IS NOT NULL),
+                       ARRAY[]::VARCHAR[]
+                   ) AS events
+            FROM notification_channels c
+            LEFT JOIN teams t ON t.id = c.team_id
+            LEFT JOIN notification_channel_events e ON e.channel_id = c.id
+            GROUP BY c.id, t.name
+            ORDER BY c.name
+            """
+        )
+        return list(cur.fetchall())
+
+
+def get_notification_channel(channel_id: int, *, include_webhook: bool = False) -> dict | None:
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.*, t.name AS team_name,
+                   COALESCE(
+                       array_agg(e.event_key ORDER BY e.event_key)
+                       FILTER (WHERE e.event_key IS NOT NULL),
+                       ARRAY[]::VARCHAR[]
+                   ) AS events
+            FROM notification_channels c
+            LEFT JOIN teams t ON t.id = c.team_id
+            LEFT JOIN notification_channel_events e ON e.channel_id = c.id
+            WHERE c.id = %s
+            GROUP BY c.id, t.name
+            """,
+            (channel_id,),
+        )
+        row = cur.fetchone()
+        if row and not include_webhook:
+            row.pop("webhook_encrypted", None)
+        return row
+
+
+def create_notification_channel(
+    *,
+    name: str,
+    provider: str,
+    destination: str | None,
+    webhook: str,
+    team_id: int | None,
+    is_active: bool,
+    events: Iterable[str],
+    created_by: int,
+) -> int:
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO notification_channels (
+                name, provider, destination, webhook_encrypted,
+                team_id, is_active, created_by
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                name,
+                provider,
+                destination,
+                encrypt_secret(webhook),
+                team_id,
+                is_active,
+                created_by,
+            ),
+        )
+        channel_id = cur.fetchone()["id"]
+        for event_key in events:
+            cur.execute(
+                """
+                INSERT INTO notification_channel_events (channel_id, event_key)
+                VALUES (%s, %s)
+                """,
+                (channel_id, event_key),
+            )
+        return channel_id
+
+
+def update_notification_channel(
+    channel_id: int,
+    *,
+    name: str,
+    provider: str,
+    destination: str | None,
+    webhook: str | None,
+    team_id: int | None,
+    clear_team: bool,
+    is_active: bool,
+    events: Iterable[str],
+) -> bool:
+    resolved_team_id = None if clear_team else team_id
+    with db_cursor(commit=True) as cur:
+        if webhook:
+            cur.execute(
+                """
+                UPDATE notification_channels
+                SET name = %s, provider = %s, destination = %s,
+                    webhook_encrypted = %s,
+                    team_id = %s,
+                    is_active = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (
+                    name,
+                    provider,
+                    destination,
+                    encrypt_secret(webhook),
+                    resolved_team_id,
+                    is_active,
+                    channel_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE notification_channels
+                SET name = %s, provider = %s, destination = %s,
+                    team_id = %s,
+                    is_active = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (name, provider, destination, resolved_team_id, is_active, channel_id),
+            )
+        if cur.rowcount == 0:
+            return False
+        cur.execute("DELETE FROM notification_channel_events WHERE channel_id = %s", (channel_id,))
+        for event_key in events:
+            cur.execute(
+                """
+                INSERT INTO notification_channel_events (channel_id, event_key)
+                VALUES (%s, %s)
+                """,
+                (channel_id, event_key),
+            )
+        return True
+
+
+def get_notification_webhook(channel_id: int) -> tuple[dict, str]:
+    row = get_notification_channel(channel_id, include_webhook=True)
+    if not row:
+        raise ValueError("Canal não encontrado.")
+    encrypted = row.get("webhook_encrypted")
+    if not encrypted:
+        raise ValueError("Canal sem webhook configurado.")
+    return row, decrypt_secret(encrypted)
+
+
+def record_notification_delivery(
+    channel_id: int,
+    *,
+    event_key: str,
+    ok: bool,
+    detail: str | None,
+) -> None:
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO notification_deliveries (channel_id, event_key, ok, detail)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (channel_id, event_key, ok, (detail or "")[:500] or None),
+        )
+        cur.execute(
+            """
+            UPDATE notification_channels
+            SET last_delivery_at = NOW(), last_ok = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (ok, channel_id),
+        )
+
+
+def notification_delivery_kpis() -> dict:
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE ok = FALSE AND created_at >= NOW() - INTERVAL '24 hours'
+                ) AS failures_24h,
+                COUNT(*) FILTER (
+                    WHERE ok = TRUE AND created_at >= CURRENT_DATE
+                ) AS delivered_today
+            FROM notification_deliveries
+            """
+        )
+        row = cur.fetchone() or {}
+        return {
+            "failures_24h": int(row.get("failures_24h") or 0),
+            "delivered_today": int(row.get("delivered_today") or 0),
+        }

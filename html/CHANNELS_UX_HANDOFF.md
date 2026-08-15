@@ -1,5 +1,8 @@
 # Canais e comunicação — handoff de UX
 
+> Status: portado para `frontend/src/pages/ChannelsPage.tsx` com API em
+> `backend/routers/channels.py` e persistência Postgres.
+
 ## Ator(es)
 
 - **Admin** — cria, edita, testa e pausa canais (Teams, Slack, Google Chat).

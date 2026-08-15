@@ -1,5 +1,12 @@
-import { useEffect, useState, type ReactNode, type WheelEvent } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type WheelEvent,
+} from "react";
+import { createPortal } from "react-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ALERTS_BADGE_EVENT, getAlerts } from "../api/alerts";
 import { useAuth } from "../auth/AuthContext";
 
@@ -24,7 +31,13 @@ function NavIcon({ children }: { children: ReactNode }) {
 
 export function AppShell() {
   const { user, logout } = useAuth();
+  const location = useLocation();
   const [alertsCount, setAlertsCount] = useState(0);
+  const [adminMenuOpen, setAdminMenuOpen] = useState(false);
+  const [adminMenuPosition, setAdminMenuPosition] = useState({ top: 0, left: 0 });
+  const adminTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const adminActive = location.pathname === "/admin" || location.pathname === "/canais";
 
   useEffect(() => {
     const onBadge = (event: Event) => {
@@ -36,6 +49,54 @@ export function AppShell() {
       .catch(() => setAlertsCount(0));
     return () => window.removeEventListener(ALERTS_BADGE_EVENT, onBadge);
   }, []);
+
+  useEffect(() => {
+    setAdminMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!adminMenuOpen) return;
+    function placeAdminMenu() {
+      const rect = adminTriggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setAdminMenuPosition({
+        top: Math.round(rect.top),
+        left: Math.round(rect.right + 8),
+      });
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setAdminMenuOpen(false);
+        adminTriggerRef.current?.focus();
+      }
+    }
+    placeAdminMenu();
+    window.addEventListener("resize", placeAdminMenu);
+    window.addEventListener("scroll", placeAdminMenu, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("resize", placeAdminMenu);
+      window.removeEventListener("scroll", placeAdminMenu, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [adminMenuOpen]);
+
+  function openAdminMenu() {
+    if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current);
+    const rect = adminTriggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      setAdminMenuPosition({
+        top: Math.round(rect.top),
+        left: Math.round(rect.right + 8),
+      });
+    }
+    setAdminMenuOpen(true);
+  }
+
+  function scheduleAdminMenuClose() {
+    if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => setAdminMenuOpen(false), 140);
+  }
 
   // Wheel over the sticky sidebar must scroll the page (otherwise it feels stuck).
   function onSidebarWheel(e: WheelEvent<HTMLElement>) {
@@ -90,17 +151,60 @@ export function AppShell() {
             ) : null}
           </NavLink>
           {user?.role === "admin" ? (
-            <NavLink to="/admin">
-              <NavIcon>
-                <circle cx="12" cy="8" r="3.5" />
-                <path d="M5 20a7 7 0 0 1 14 0" />
-                <path d="M19 4v4" />
-                <path d="M17 6h4" />
-              </NavIcon>
-              Administração
-            </NavLink>
+            <div
+              className={`sidebar-nav-group${adminActive ? " has-active" : ""}`}
+              onMouseEnter={openAdminMenu}
+              onMouseLeave={scheduleAdminMenuClose}
+            >
+              <button
+                ref={adminTriggerRef}
+                type="button"
+                className="sidebar-nav-group-trigger"
+                aria-expanded={adminMenuOpen}
+                aria-haspopup="menu"
+                aria-controls="admin-nav-flyout"
+                onFocus={openAdminMenu}
+                onClick={openAdminMenu}
+              >
+                <NavIcon>
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M5 20a7 7 0 0 1 14 0" />
+                  <path d="M19 4v4" />
+                  <path d="M17 6h4" />
+                </NavIcon>
+                Administração
+              </button>
+            </div>
           ) : null}
         </nav>
+        {user?.role === "admin" && adminMenuOpen
+          ? createPortal(
+              <div
+                id="admin-nav-flyout"
+                className="sidebar-nav-flyout"
+                role="menu"
+                aria-label="Administração"
+                style={{ top: adminMenuPosition.top, left: adminMenuPosition.left }}
+                onMouseEnter={openAdminMenu}
+                onMouseLeave={scheduleAdminMenuClose}
+              >
+                <NavLink to="/admin" role="menuitem">
+                  <NavIcon>
+                    <circle cx="12" cy="8" r="3.5" />
+                    <path d="M5 20a7 7 0 0 1 14 0" />
+                  </NavIcon>
+                  Administração
+                </NavLink>
+                <NavLink to="/canais" role="menuitem">
+                  <NavIcon>
+                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                  </NavIcon>
+                  Canais
+                </NavLink>
+              </div>,
+              document.body,
+            )
+          : null}
         <button type="button" className="btn ghost logout" onClick={() => void logout()}>
           <svg
             className="logout-icon"

@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     id              SERIAL PRIMARY KEY,
     username        VARCHAR(100) NOT NULL UNIQUE,
     password_hash   TEXT NOT NULL,
-    role            VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'analyst')),
+    role            VARCHAR(20) NOT NULL CHECK (role IN ('admin', 'suporte')),
     team_id         INT REFERENCES teams(id) ON DELETE SET NULL,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -45,10 +45,44 @@ CREATE TABLE IF NOT EXISTS oauth_pending (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS notification_channels (
+    id                  SERIAL PRIMARY KEY,
+    name                VARCHAR(200) NOT NULL,
+    provider            VARCHAR(32) NOT NULL
+                        CHECK (provider IN ('teams', 'slack', 'gchat')),
+    destination         VARCHAR(200),
+    webhook_encrypted   TEXT NOT NULL,
+    team_id             INT REFERENCES teams(id) ON DELETE SET NULL,
+    is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    last_delivery_at    TIMESTAMPTZ,
+    last_ok             BOOLEAN,
+    created_by          INT REFERENCES users(id) ON DELETE SET NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS notification_channel_events (
+    channel_id  INT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+    event_key   VARCHAR(64) NOT NULL,
+    PRIMARY KEY (channel_id, event_key)
+);
+
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+    id          BIGSERIAL PRIMARY KEY,
+    channel_id  INT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+    event_key   VARCHAR(64) NOT NULL DEFAULT 'test',
+    ok          BOOLEAN NOT NULL,
+    detail      VARCHAR(500),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_oauth_pending_created ON oauth_pending(created_at);
 CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);
 CREATE INDEX IF NOT EXISTS idx_connections_team ON connections(team_id);
 CREATE INDEX IF NOT EXISTS idx_connections_account ON connections(account_identifier);
+CREATE INDEX IF NOT EXISTS idx_notification_channels_team ON notification_channels(team_id);
+CREATE INDEX IF NOT EXISTS idx_notification_deliveries_created
+ON notification_deliveries(created_at);
 
 -- Default team (admin user is seeded by the app on first boot)
 INSERT INTO teams (name) VALUES ('Suporte')

@@ -22,7 +22,7 @@ docker compose up --build
 ```
 
 - App: http://localhost:8501  
-- API: http://localhost:8000/api/health  
+- API: http://localhost:8010/api/health (porta do host via `API_PORT`)  
 
 Login: `admin` / `admin123` (ou `.env`)
 
@@ -41,7 +41,7 @@ cd frontend && npm install && npm run dev   # :5173 com proxy /api
 
 ## Auth Snowflake
 
-Preferência: **Conectar via browser** (OAuth local `SNOWFLAKE$LOCAL_APPLICATION`, callback em `http://127.0.0.1:8000`). Alternativa: PAT — guia [`docs/CONECTAR_PAT.md`](docs/CONECTAR_PAT.md).
+Preferência: **Conectar via browser** (OAuth local `SNOWFLAKE$LOCAL_APPLICATION`, callback em `http://127.0.0.1:8010`). Alternativa: PAT — guia [`docs/CONECTAR_PAT.md`](docs/CONECTAR_PAT.md).
 
 Em **Conexões → Contas salvas**: Editar (warehouse/role), Ativar, Inativar, Remover. Warehouse vazio evita WH default bloqueado por resource monitor; a API tenta um WH disponível automaticamente.
 

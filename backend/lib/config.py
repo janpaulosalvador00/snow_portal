@@ -25,7 +25,7 @@ def get_settings() -> dict:
         "session_timeout_hours": int(os.getenv("SESSION_TIMEOUT_HOURS", "12")),
         "oauth_redirect_uri": os.getenv(
             "OAUTH_REDIRECT_URI",
-            "http://127.0.0.1:8000",
+            "http://127.0.0.1:8010",
         ),
         "portal_public_url": os.getenv("PORTAL_PUBLIC_URL", "http://localhost:8501"),
     }

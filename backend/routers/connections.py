@@ -389,7 +389,7 @@ def oauth_callback(
     error: str | None = None,
     error_description: str | None = Query(None, alias="error_description"),
 ):
-    """OAuth redirect target (http://127.0.0.1:8000). No JWT — uses state."""
+    """OAuth redirect target (http://127.0.0.1:8010). No JWT — uses state."""
     if not code and not state and not error:
         return {"status": "ok", "service": "snow_portal-api"}
 

@@ -43,7 +43,7 @@ def account_base_url(account: str) -> str:
 def oauth_redirect_uri() -> str:
     settings = get_settings()
     # LOCAL_APPLICATION expects http://127.0.0.1[:port] (empty path, like the drivers)
-    return (settings.get("oauth_redirect_uri") or "http://127.0.0.1:8000").rstrip("/")
+    return (settings.get("oauth_redirect_uri") or "http://127.0.0.1:8010").rstrip("/")
 
 
 def portal_public_url() -> str:

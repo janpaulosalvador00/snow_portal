@@ -5,14 +5,27 @@ import { MonitorsToolbar } from "./MonitorsToolbar";
 type Props = {
   items: Monitor[];
   note?: string | null;
+  /**
+   * When provided (including `[]`), this is the authoritative Account filter list
+   * (Hub: ORGANIZATION_USAGE via /api/cost/org-accounts for the active connection).
+   * When omitted (Cost → Resource Monitors), options are derived from row account_name.
+   */
+  accountOptions?: string[];
   onRefresh: () => void;
   loading?: boolean;
 };
 
-export function MonitorsPanel({ items, note, onRefresh, loading }: Props) {
+export function MonitorsPanel({
+  items,
+  note,
+  accountOptions,
+  onRefresh,
+  loading,
+}: Props) {
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState("All");
   const [warehouse, setWarehouse] = useState("All");
+  const [account, setAccount] = useState("All");
   const [frequency, setFrequency] = useState("All");
 
   const levels = useMemo(() => {
@@ -33,6 +46,23 @@ export function MonitorsPanel({ items, note, onRefresh, loading }: Props) {
     return ["All", ...Array.from(s).sort()];
   }, [items]);
 
+  const accounts = useMemo(() => {
+    // Hub: parent owns the list — do not merge portal connection names from rows.
+    if (accountOptions !== undefined) {
+      const names = [
+        ...new Set(accountOptions.map((n) => n.trim()).filter(Boolean)),
+      ].sort((a, b) => a.localeCompare(b));
+      return ["All", ...names];
+    }
+    // Cost → Resource Monitors: derive from rows only.
+    const s = new Set<string>();
+    for (const m of items) {
+      const n = (m.account_name || "").trim();
+      if (n) s.add(n);
+    }
+    return ["All", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
+  }, [items, accountOptions]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter((m) => {
@@ -42,9 +72,13 @@ export function MonitorsPanel({ items, note, onRefresh, loading }: Props) {
       if (warehouse !== "All" && !(m.warehouses || []).includes(warehouse)) {
         return false;
       }
+      if (account !== "All") {
+        const name = (m.account_name || "").trim();
+        if (name !== account) return false;
+      }
       return true;
     });
-  }, [items, search, level, warehouse, frequency]);
+  }, [items, search, level, warehouse, account, frequency]);
 
   return (
     <div className="monitors-panel">
@@ -59,6 +93,9 @@ export function MonitorsPanel({ items, note, onRefresh, loading }: Props) {
         warehouse={warehouse}
         onWarehouse={setWarehouse}
         warehouses={warehouses}
+        account={account}
+        onAccount={setAccount}
+        accounts={accounts}
         frequency={frequency}
         onFrequency={setFrequency}
         frequencies={frequencies}

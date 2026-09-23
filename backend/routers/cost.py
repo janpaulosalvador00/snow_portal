@@ -153,3 +153,69 @@ def cost_organization_overview(
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/org-accounts")
+def cost_org_accounts(
+    connection_id: int = Query(...),
+    days: int = Query(28, ge=1, le=365),
+    start_date: str | None = Query(None, description="YYYY-MM-DD (UTC)"),
+    end_date: str | None = Query(None, description="YYYY-MM-DD (UTC)"),
+    user: dict = Depends(get_current_user),
+):
+    """Account names for the Consumption All Accounts filter (ORGANIZATION_USAGE)."""
+    creds = _creds(user, connection_id)
+    if (start_date and not end_date) or (end_date and not start_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
+        )
+    fallback = (
+        creds.get("account")
+        or creds.get("account_identifier")
+        or None
+    )
+    try:
+        return cost_queries.list_org_accounts(
+            creds,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+            fallback_name=str(fallback) if fallback else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/org-consumption")
+def cost_org_consumption(
+    connection_id: int = Query(...),
+    days: int = Query(28, ge=1, le=365),
+    start_date: str | None = Query(None, description="YYYY-MM-DD (UTC)"),
+    end_date: str | None = Query(None, description="YYYY-MM-DD (UTC)"),
+    account_name: str | None = Query(
+        None, description="Snowflake ACCOUNT_NAME; omit or All for all accounts"
+    ),
+    user: dict = Depends(get_current_user),
+):
+    """Consumption stacked by org account (Snowflake All Accounts view)."""
+    creds = _creds(user, connection_id)
+    if (start_date and not end_date) or (end_date and not start_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
+        )
+    try:
+        return cost_queries.org_consumption_by_account(
+            creds,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+            account_name=account_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

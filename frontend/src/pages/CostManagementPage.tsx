@@ -34,7 +34,17 @@ type Consumption = {
   total_credits: number;
   summary: { name: string; type: string; tags: string; credits_used: number }[];
   chart: { period_start: string; resource_name: string; credits: number }[];
+  available?: boolean;
+  note?: string | null;
 };
+
+type OrgAccountsResp = {
+  available: boolean;
+  accounts: string[];
+  note: string | null;
+};
+
+const ALL_ACCOUNTS = "__all__";
 
 type AccountOverview = {
   days: number;
@@ -115,6 +125,12 @@ export function CostManagementPage() {
   const [grain, setGrain] = useState("day");
   const [serviceType, setServiceType] = useState("WAREHOUSE_METERING");
   const [resourceFilter, setResourceFilter] = useState("All");
+  /** Snowflake-style All Accounts filter (`__all__` or ACCOUNT_NAME). */
+  const [orgAccountFilter, setOrgAccountFilter] = useState(ALL_ACCOUNTS);
+  const [orgAccounts, setOrgAccounts] = useState<string[]>([]);
+  const [orgAccountsNote, setOrgAccountsNote] = useState<string | null>(null);
+  /** Consumption chart/table stacked by Account vs Warehouse resource. */
+  const [consumptionByAccount, setConsumptionByAccount] = useState(false);
   const [data, setData] = useState<Consumption | null>(null);
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [anom, setAnom] = useState<AnomaliesResp | null>(null);
@@ -201,6 +217,9 @@ export function CostManagementPage() {
       setMonitors(null);
       setBudgets(null);
       setOrg(null);
+      setOrgAccounts([]);
+      setOrgAccountsNote(null);
+      setConsumptionByAccount(false);
       setLoading(false);
       return;
     }
@@ -248,9 +267,54 @@ export function CostManagementPage() {
         qs.set("grain", "day");
         qs.set("service_type", serviceType);
         // Resources filter is client-side on the last response (no re-fetch needed).
-        const res = await api<Consumption>(`/api/cost/consumption?${qs}`, { signal });
+        const fallbackName =
+          connections.find((c) => c.id === id)?.name ||
+          connections.find((c) => c.id === id)?.account_identifier ||
+          undefined;
+        const accountsRes = await api<OrgAccountsResp>(`/api/cost/org-accounts?${qs}`, {
+          signal,
+        });
         if (signal.aborted) return;
-        setData(res);
+        const names =
+          accountsRes.accounts?.length > 0
+            ? accountsRes.accounts
+            : fallbackName
+              ? [fallbackName]
+              : [];
+        setOrgAccounts(names);
+        setOrgAccountsNote(accountsRes.note);
+        // Drop stale account pick if the org list no longer includes it.
+        const accountOk =
+          orgAccountFilter === ALL_ACCOUNTS || names.includes(orgAccountFilter);
+        const effectiveAccount = accountOk ? orgAccountFilter : ALL_ACCOUNTS;
+        if (!accountOk) setOrgAccountFilter(ALL_ACCOUNTS);
+
+        const canUseOrg = accountsRes.available && names.length > 0;
+        if (canUseOrg) {
+          const orgQs = new URLSearchParams(qs);
+          if (effectiveAccount !== ALL_ACCOUNTS) {
+            orgQs.set("account_name", effectiveAccount);
+          }
+          const res = await api<Consumption>(`/api/cost/org-consumption?${orgQs}`, {
+            signal,
+          });
+          if (signal.aborted) return;
+          if (res.available === false) {
+            // Fall back to single-account warehouse metering.
+            const wh = await api<Consumption>(`/api/cost/consumption?${qs}`, { signal });
+            if (signal.aborted) return;
+            setData(wh);
+            setConsumptionByAccount(false);
+          } else {
+            setData(res);
+            setConsumptionByAccount(true);
+          }
+        } else {
+          const res = await api<Consumption>(`/api/cost/consumption?${qs}`, { signal });
+          if (signal.aborted) return;
+          setData(res);
+          setConsumptionByAccount(false);
+        }
       } else if (tab === "Account Overview") {
         const res = await api<AccountOverview>(`/api/cost/account-overview?${qs}`, {
           signal,
@@ -289,6 +353,8 @@ export function CostManagementPage() {
       setMonitors(null);
       setBudgets(null);
       setOrg(null);
+      setOrgAccounts([]);
+      setConsumptionByAccount(false);
       setErr(e instanceof ApiError ? e.message : "Falha ao carregar Cost Management.");
     } finally {
       // Only the latest in-flight request may clear the spinner (aborts leave loading on).
@@ -311,7 +377,7 @@ export function CostManagementPage() {
       loadAbortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, tab, dateKey, usageType, serviceType]);
+  }, [connectionId, tab, dateKey, usageType, serviceType, orgAccountFilter]);
 
   // Changing Service Type invalidates resource picks from other service types.
   useEffect(() => {
@@ -434,8 +500,9 @@ export function CostManagementPage() {
                         const id = Number(e.target.value);
                         setConnectionId(id);
                         setActiveConnectionId(id);
+                        setOrgAccountFilter(ALL_ACCOUNTS);
                       }}
-                      aria-label="Account"
+                      aria-label="Connection"
                     >
                       {connections.map((c) => (
                         <option key={c.id} value={c.id}>
@@ -451,12 +518,36 @@ export function CostManagementPage() {
                       onClick={() => {
                         setActiveConnectionId(null);
                         setConnectionId("");
+                        setOrgAccountFilter(ALL_ACCOUNTS);
                       }}
                     >
                       ×
                     </button>
                   </span>
                 ) : null}
+                <span
+                  className="account-chip account-chip-all"
+                  title={orgAccountsNote || undefined}
+                >
+                  <select
+                    className="account-chip-select"
+                    value={orgAccountFilter}
+                    onChange={(e) => setOrgAccountFilter(e.target.value)}
+                    aria-label="All Accounts"
+                  >
+                    <option value={ALL_ACCOUNTS}>All Accounts</option>
+                    {(orgAccounts.length
+                      ? orgAccounts
+                      : activeConn
+                        ? [activeConn.name]
+                        : []
+                    ).map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </span>
                 <FilterPill
                   label="Tags"
                   value="N/A"
@@ -564,17 +655,27 @@ export function CostManagementPage() {
 
           {tab === "Consumption" && data ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
+              {orgAccountsNote && !consumptionByAccount ? (
+                <div className="info-box">{orgAccountsNote}</div>
+              ) : null}
               {chartData?.rows.length ? (
                 <StackedConsumptionChart
                   rows={chartData.rows}
                   resources={chartData.resources}
                   grain={grain}
                   onGrain={setGrain}
+                  viewByLabel={
+                    consumptionByAccount ? "View by Account" : "View by Resource"
+                  }
                 />
               ) : (
                 <div className="info-box">Nenhum consumo no período.</div>
               )}
-              <CreditsTable rows={summaryRows} />
+              <CreditsTable
+                rows={summaryRows}
+                nameHeader={consumptionByAccount ? "ACCOUNT" : "NAME"}
+                typeHeader={consumptionByAccount ? "TYPE" : "TYPE"}
+              />
             </div>
           ) : null}
 

@@ -22,13 +22,23 @@ type Conn = {
 
 type MonitorsResp = {
   items: Monitor[];
+  account_name?: string | null;
+  note: string | null;
+};
+
+type OrgAccountsResp = {
+  available: boolean;
+  accounts: string[];
   note: string | null;
 };
 
 export function HubPage() {
   const [connections, setConnections] = useState<Conn[]>([]);
   const [activeId, setActiveId] = useState<number | null>(getActiveConnectionId());
-  const [monitors, setMonitors] = useState<MonitorsResp | null>(null);
+  const [monitors, setMonitors] = useState<Monitor[]>([]);
+  /** Authoritative Account filter options (All Accounts + these). Same source as Consumption. */
+  const [orgAccountNames, setOrgAccountNames] = useState<string[]>([]);
+  const [monitorsNote, setMonitorsNote] = useState<string | null>(null);
   const [monitorsErr, setMonitorsErr] = useState<string | null>(null);
   const [monitorsLoading, setMonitorsLoading] = useState(false);
   const loadAbortRef = useRef<AbortController | null>(null);
@@ -59,15 +69,46 @@ export function HubPage() {
     setMonitorsLoading(true);
     setMonitorsErr(null);
     try {
+      // Org account names for this connection only (ORGANIZATION_USAGE) — same as Consumption.
+      const orgPromise = api<OrgAccountsResp>(
+        `/api/cost/org-accounts?connection_id=${connectionId}&days=28`,
+        { signal },
+      ).catch(() => null);
+
+      // Resource monitors for the active connection only — no fan-out across portal connections.
       const res = await api<MonitorsResp>(
         `/api/cost/resource-monitors?connection_id=${connectionId}`,
         { signal },
       );
       if (signal.aborted) return;
-      setMonitors(res);
+
+      // Snowflake CURRENT_ACCOUNT() — never portal connection name / other connections.
+      const snowflakeAcct = (res.account_name || "").trim() || null;
+      const items = (res.items || []).map((item) => ({
+        ...item,
+        account_name: (item.account_name || "").trim() || snowflakeAcct,
+      }));
+
+      const org = await orgPromise;
+      if (signal.aborted) return;
+
+      let filterAccounts: string[] = [];
+      if (org?.available && org.accounts?.length) {
+        filterAccounts = org.accounts.map((a) => a.trim()).filter(Boolean);
+      } else if (snowflakeAcct) {
+        // Org unavailable / empty: All Accounts + CURRENT_ACCOUNT only.
+        filterAccounts = [snowflakeAcct];
+      }
+
+      setOrgAccountNames(filterAccounts);
+      setMonitors(items);
+      setMonitorsNote(res.note && !items.length ? res.note : null);
+      setMonitorsErr(null);
     } catch (e) {
       if (signal.aborted || isAbortError(e)) return;
-      setMonitors(null);
+      setMonitors([]);
+      setOrgAccountNames([]);
+      setMonitorsNote(null);
       setMonitorsErr(
         e instanceof ApiError ? e.message : "Falha ao carregar Resource Monitors.",
       );
@@ -80,7 +121,9 @@ export function HubPage() {
     if (activeId == null) {
       loadAbortRef.current?.abort();
       loadAbortRef.current = null;
-      setMonitors(null);
+      setMonitors([]);
+      setOrgAccountNames([]);
+      setMonitorsNote(null);
       setMonitorsErr(null);
       setMonitorsLoading(false);
       return;
@@ -90,10 +133,13 @@ export function HubPage() {
       window.clearTimeout(t);
       loadAbortRef.current?.abort();
     };
+    // Re-load when active connection changes (not when the connections list identity churns).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only activeId
   }, [activeId]);
 
   const active = connections.find((c) => c.id === activeId);
   const canSelect = connections.length > 1;
+  const hasMonitorsData = monitors.length > 0 || !!monitorsNote;
 
   function onSelectActive(value: string) {
     if (!value) {
@@ -166,15 +212,16 @@ export function HubPage() {
           </p>
         ) : (
           <>
-            {monitorsErr ? (
+            {monitorsErr && !hasMonitorsData ? (
               <ErrorBanner message={monitorsErr} connectionId={activeId} />
             ) : null}
-            {monitorsLoading && !monitorsErr && !monitors ? <CostSkeleton /> : null}
-            {monitors ? (
+            {monitorsLoading && !hasMonitorsData ? <CostSkeleton /> : null}
+            {hasMonitorsData || (!monitorsLoading && !monitorsErr) ? (
               <div className={`cost-tab-body${monitorsLoading ? " is-refreshing" : ""}`}>
                 <MonitorsPanel
-                  items={monitors.items || []}
-                  note={monitors.note}
+                  items={monitors}
+                  note={monitorsNote}
+                  accountOptions={orgAccountNames}
                   onRefresh={() => void loadMonitors(activeId)}
                   loading={monitorsLoading}
                 />

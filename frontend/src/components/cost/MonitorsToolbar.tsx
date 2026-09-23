@@ -10,6 +10,9 @@ type Props = {
   warehouse: string;
   onWarehouse: (v: string) => void;
   warehouses: string[];
+  account: string;
+  onAccount: (v: string) => void;
+  accounts: string[];
   frequency: string;
   onFrequency: (v: string) => void;
   frequencies: string[];
@@ -27,6 +30,9 @@ export function MonitorsToolbar({
   warehouse,
   onWarehouse,
   warehouses,
+  account,
+  onAccount,
+  accounts,
   frequency,
   onFrequency,
   frequencies,
@@ -69,6 +75,15 @@ export function MonitorsToolbar({
           value={warehouse}
           onChange={onWarehouse}
           options={warehouses.map((w) => ({ value: w, label: w }))}
+        />
+        <FilterPill
+          label="Account"
+          value={account}
+          onChange={onAccount}
+          options={accounts.map((a) => ({
+            value: a,
+            label: a === "All" ? "All Accounts" : a,
+          }))}
         />
         <FilterPill
           label="Frequency"

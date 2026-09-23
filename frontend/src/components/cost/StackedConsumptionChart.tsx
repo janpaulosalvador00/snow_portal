@@ -10,10 +10,10 @@ import {
 } from "recharts";
 
 const COLORS = [
-  "#29B5E8",
+  "#29B5E8", // index 0 — blue
+  "#7AD3A0", // index 1 — green (distinct from blue for 2-account views)
   "#E88B8B",
   "#C4A5E7",
-  "#7AD3A0",
   "#F0C674",
   "#8AB4F8",
   "#E8A87C",
@@ -31,10 +31,9 @@ const TIP_WIDTH_FALLBACK = 280;
 /** Delay day switches so a diagonal move toward the scrollbar does not steal focus. */
 const TIP_SWITCH_STICKY_MS = 180;
 
-export function colorForResource(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return COLORS[h % COLORS.length];
+/** Stable distinct colors by series index (avoids hash collisions on account names). */
+export function colorForIndex(index: number): string {
+  return COLORS[((index % COLORS.length) + COLORS.length) % COLORS.length];
 }
 
 function formatAxis(period: string, grain: string): string {
@@ -97,6 +96,8 @@ type Props = {
   resources: string[];
   grain: string;
   onGrain: (g: string) => void;
+  /** Chart toolbar left label (Snowflake: "View by Resource" / "View by Account"). */
+  viewByLabel?: string;
 };
 
 type TipProps = {
@@ -104,6 +105,7 @@ type TipProps = {
   label?: string;
   payload?: TipPayloadItem[];
   grain: string;
+  resources: string[];
   coordinate?: { x?: number; y?: number };
   chartWidth: number;
   tipHovering: boolean;
@@ -118,6 +120,7 @@ function ConsumptionTooltip({
   label,
   payload,
   grain,
+  resources,
   coordinate,
   chartWidth,
   tipHovering,
@@ -220,15 +223,19 @@ function ConsumptionTooltip({
     >
       <div className="ct-title">{formatTooltipDate(String(shownLabel))}</div>
       <ul className="ct-list">
-        {items.map((p) => (
+        {items.map((p) => {
+          const idx = resources.indexOf(p.name);
+          const swatch = p.color || (idx >= 0 ? colorForIndex(idx) : COLORS[0]);
+          return (
           <li key={p.name}>
-            <span className="ct-swatch" style={{ background: p.color || colorForResource(p.name) }} />
+            <span className="ct-swatch" style={{ background: swatch }} />
             <span className="ct-name" title={p.name}>
               {p.name}
             </span>
             <span className="ct-val">{Number(p.value).toFixed(1)}</span>
           </li>
-        ))}
+          );
+        })}
       </ul>
       <div className="ct-total">
         <span>Total</span>
@@ -239,7 +246,13 @@ function ConsumptionTooltip({
   );
 }
 
-export function StackedConsumptionChart({ rows, resources, grain, onGrain }: Props) {
+export function StackedConsumptionChart({
+  rows,
+  resources,
+  grain,
+  onGrain,
+  viewByLabel = "View by Resource",
+}: Props) {
   const [legendOpen, setLegendOpen] = useState(false);
   const [tipPos, setTipPos] = useState<{ x: number; y: number } | undefined>();
   const [chartWidth, setChartWidth] = useState(0);
@@ -303,7 +316,7 @@ export function StackedConsumptionChart({ rows, resources, grain, onGrain }: Pro
   return (
     <div className="chart-wrap cost-chart" ref={wrapRef}>
       <div className="chart-toolbar">
-        <div className="chart-toolbar-left muted">View by Resource</div>
+        <div className="chart-toolbar-left muted">{viewByLabel}</div>
         <div className="chart-toolbar-right">
           <select
             className="chart-view-by"
@@ -318,9 +331,9 @@ export function StackedConsumptionChart({ rows, resources, grain, onGrain }: Pro
       </div>
 
       <div className="chart-legend-row">
-        {visible.map((r) => (
+        {visible.map((r, i) => (
           <span key={r} className="chart-legend-item">
-            <span className="ct-swatch" style={{ background: colorForResource(r) }} />
+            <span className="ct-swatch" style={{ background: colorForIndex(i) }} />
             <span className="chart-legend-label" title={r}>
               {r.length > 28 ? `${r.slice(0, 26)}…` : r}
             </span>
@@ -337,9 +350,9 @@ export function StackedConsumptionChart({ rows, resources, grain, onGrain }: Pro
             </button>
             {legendOpen ? (
               <div className="chart-legend-popover">
-                {rest.map((r) => (
+                {rest.map((r, i) => (
                   <div key={r} className="chart-legend-item">
-                    <span className="ct-swatch" style={{ background: colorForResource(r) }} />
+                    <span className="ct-swatch" style={{ background: colorForIndex(LEGEND_VISIBLE + i) }} />
                     <span title={r}>{r}</span>
                   </div>
                 ))}
@@ -369,6 +382,7 @@ export function StackedConsumptionChart({ rows, resources, grain, onGrain }: Pro
             content={
               <ConsumptionTooltip
                 grain={grain}
+                resources={resources}
                 chartWidth={chartWidth}
                 tipHovering={tipHovering}
                 frozenTip={frozenTip}
@@ -383,12 +397,12 @@ export function StackedConsumptionChart({ rows, resources, grain, onGrain }: Pro
             allowEscapeViewBox={{ x: false, y: true }}
             wrapperStyle={{ pointerEvents: "auto", outline: "none", zIndex: 20 }}
           />
-          {resources.map((r) => (
+          {resources.map((r, i) => (
             <Bar
               key={r}
               dataKey={r}
               stackId="a"
-              fill={colorForResource(r)}
+              fill={colorForIndex(i)}
               minPointSize={2}
             />
           ))}

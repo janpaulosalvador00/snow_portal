@@ -357,17 +357,52 @@ def _run_show(creds: dict, sql: str) -> tuple[pd.DataFrame | None, str | None]:
 
 
 def resource_monitors(creds: dict) -> dict[str, Any]:
+    account_name: str | None = None
+    try:
+        # Prefer account name (matches ORGANIZATION_USAGE / Consumption filter);
+        # fall back to locator if CURRENT_ACCOUNT_NAME is unavailable.
+        adf = run_query_with_creds(
+            creds,
+            """
+            SELECT
+                CURRENT_ACCOUNT_NAME() AS account_name,
+                CURRENT_ACCOUNT() AS account_locator
+            """,
+        )
+        if adf is not None and not adf.empty:
+            adf.columns = [str(c).lower() for c in adf.columns]
+            raw = adf.iloc[0].get("account_name")
+            if raw is None or (isinstance(raw, float) and pd.isna(raw)) or not str(raw).strip():
+                raw = adf.iloc[0].get("account_locator")
+            if raw is not None and not (isinstance(raw, float) and pd.isna(raw)):
+                account_name = str(raw).strip() or None
+    except Exception:  # noqa: BLE001
+        try:
+            adf = run_query_with_creds(creds, "SELECT CURRENT_ACCOUNT() AS account_name")
+            if adf is not None and not adf.empty:
+                adf.columns = [str(c).lower() for c in adf.columns]
+                raw = adf.iloc[0].get("account_name")
+                if raw is not None and not (isinstance(raw, float) and pd.isna(raw)):
+                    account_name = str(raw).strip() or None
+        except Exception:  # noqa: BLE001
+            account_name = None
+
     df, err = _run_show(creds, "SHOW RESOURCE MONITORS")
     if err:
         return {
             "items": [],
+            "account_name": account_name,
             "note": (
                 "Sem acesso a Resource Monitors (precisa MONITOR / ACCOUNTADMIN). "
                 f"Detalhe: {err}"
             ),
         }
     if df is None or df.empty:
-        return {"items": [], "note": "Nenhum resource monitor nesta conta."}
+        return {
+            "items": [],
+            "account_name": account_name,
+            "note": "Nenhum resource monitor nesta conta.",
+        }
 
     # Map monitor name -> warehouses via SHOW WAREHOUSES.resource_monitor
     wh_by_monitor: dict[str, list[str]] = {}
@@ -412,6 +447,7 @@ def resource_monitors(creds: dict) -> dict[str, Any]:
         items.append(
             {
                 "name": name,
+                "account_name": account_name,
                 "credit_quota": quota,
                 "used_credits": used,
                 "remaining_credits": remaining,
@@ -422,7 +458,7 @@ def resource_monitors(creds: dict) -> dict[str, Any]:
                 "start_time": start_s,
             }
         )
-    return {"items": items, "note": None}
+    return {"items": items, "account_name": account_name, "note": None}
 
 
 def budgets(creds: dict) -> dict[str, Any]:
@@ -453,13 +489,14 @@ def budgets(creds: dict) -> dict[str, Any]:
     return {"items": items, "note": None}
 
 
-def organization_overview(
+def _org_metering_daily(
     creds: dict,
     *,
     days: int = 28,
     start_date: str | None = None,
     end_date: str | None = None,
-) -> dict[str, Any]:
+) -> tuple[pd.DataFrame | None, str | None]:
+    """Return ORGANIZATION_USAGE daily metering or (None, note) on failure."""
     try:
         if start_date and end_date:
             from datetime import date as date_cls
@@ -479,7 +516,7 @@ def organization_overview(
                 WHERE USAGE_DATE >= %s AND USAGE_DATE <= %s
                 GROUP BY 1, 2
                 ORDER BY USAGE_DATE DESC
-                LIMIT 500
+                LIMIT 2000
                 """,
                 (start_d.isoformat(), end_d.isoformat()),
             )
@@ -495,22 +532,37 @@ def organization_overview(
                 WHERE USAGE_DATE >= DATEADD('day', %s, CURRENT_DATE())
                 GROUP BY 1, 2
                 ORDER BY USAGE_DATE DESC
-                LIMIT 500
+                LIMIT 2000
                 """,
                 (-int(days),),
             )
     except ValueError:
         raise
     except Exception as exc:  # noqa: BLE001
-        return {
-            "available": False,
-            "items": [],
-            "note": (
-                "Organization Overview requer ORGADMIN ou grant em "
-                "SNOWFLAKE.ORGANIZATION_USAGE. "
-                f"Detalhe: {friendly_connect_error(exc, auth_method=creds.get('auth_method'))}"
-            ),
-        }
+        return None, (
+            "Organization Usage requer ORGADMIN ou grant em "
+            "SNOWFLAKE.ORGANIZATION_USAGE. "
+            f"Detalhe: {friendly_connect_error(exc, auth_method=creds.get('auth_method'))}"
+        )
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["usage_date", "account_name", "credits_used"]), None
+    df = df.copy()
+    df.columns = [c.lower() for c in df.columns]
+    return df, None
+
+
+def organization_overview(
+    creds: dict,
+    *,
+    days: int = 28,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
+    df, note = _org_metering_daily(
+        creds, days=days, start_date=start_date, end_date=end_date
+    )
+    if df is None:
+        return {"available": False, "items": [], "note": note}
 
     if df.empty:
         return {
@@ -518,7 +570,6 @@ def organization_overview(
             "items": [],
             "note": "Sem dados de ORGANIZATION_USAGE no período.",
         }
-    df.columns = [c.lower() for c in df.columns]
     items = []
     for _, r in df.iterrows():
         d = r.get("usage_date")
@@ -530,6 +581,106 @@ def organization_overview(
             }
         )
     return {"available": True, "items": items, "note": None}
+
+
+def list_org_accounts(
+    creds: dict,
+    *,
+    days: int = 28,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    fallback_name: str | None = None,
+) -> dict[str, Any]:
+    """Distinct Snowflake account names for the All Accounts filter."""
+    df, note = _org_metering_daily(
+        creds, days=days, start_date=start_date, end_date=end_date
+    )
+    if df is None:
+        accounts = [fallback_name] if fallback_name else []
+        return {
+            "available": False,
+            "accounts": [a for a in accounts if a],
+            "note": note,
+        }
+    names: list[str] = []
+    if not df.empty and "account_name" in df.columns:
+        for n in df["account_name"].dropna().astype(str).unique().tolist():
+            name = n.strip()
+            if name and name not in names:
+                names.append(name)
+        names.sort(key=str.lower)
+    if not names and fallback_name:
+        names = [fallback_name]
+    return {"available": True, "accounts": names, "note": None}
+
+
+def org_consumption_by_account(
+    creds: dict,
+    *,
+    days: int = 28,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    account_name: str | None = None,
+) -> dict[str, Any]:
+    """Consumption payload shaped like warehouse consumption, but stacked by account."""
+    df, note = _org_metering_daily(
+        creds, days=days, start_date=start_date, end_date=end_date
+    )
+    if df is None:
+        return {
+            "available": False,
+            "total_credits": 0.0,
+            "summary": [],
+            "chart": [],
+            "note": note,
+        }
+
+    if account_name and account_name not in ("All", "ALL", "__all__"):
+        df = df[df["account_name"].astype(str) == account_name]
+
+    if df.empty:
+        return {
+            "available": True,
+            "total_credits": 0.0,
+            "summary": [],
+            "chart": [],
+            "note": None,
+        }
+
+    chart: list[dict[str, Any]] = []
+    for _, r in df.iterrows():
+        d = r.get("usage_date")
+        period = d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]
+        chart.append(
+            {
+                "period_start": period[:10],
+                "resource_name": str(r.get("account_name") or "UNKNOWN"),
+                "credits": float(r.get("credits_used") or 0),
+            }
+        )
+
+    by_acct: dict[str, float] = {}
+    for row in chart:
+        by_acct[row["resource_name"]] = by_acct.get(row["resource_name"], 0.0) + row[
+            "credits"
+        ]
+    summary = [
+        {
+            "name": name,
+            "type": "Account",
+            "tags": "",
+            "credits_used": round(credits, 4),
+        }
+        for name, credits in sorted(by_acct.items(), key=lambda x: (-x[1], x[0].lower()))
+    ]
+    total = round(sum(by_acct.values()), 4)
+    return {
+        "available": True,
+        "total_credits": total,
+        "summary": summary,
+        "chart": chart,
+        "note": None,
+    }
 
 
 def _num(row: pd.Series, *keys: str) -> float | None:

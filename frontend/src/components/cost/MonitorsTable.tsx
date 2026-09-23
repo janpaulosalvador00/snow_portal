@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 export type Monitor = {
   name: string;
+  account_name?: string | null;
   credit_quota: number | null;
   used_credits: number | null;
   remaining_credits: number | null;
@@ -14,6 +15,7 @@ export type Monitor = {
 
 type SortKey =
   | "name"
+  | "account_name"
   | "quota_used_pct"
   | "level"
   | "warehouses"
@@ -40,11 +42,17 @@ function warehousesLabel(ws: string[] | undefined) {
   return ws.join(", ");
 }
 
+function accountLabel(m: Monitor) {
+  return (m.account_name || "").trim() || "—";
+}
+
 function compareMonitors(a: Monitor, b: Monitor, key: SortKey, dir: 1 | -1): number {
   const mul = dir;
   switch (key) {
     case "name":
       return mul * a.name.localeCompare(b.name);
+    case "account_name":
+      return mul * accountLabel(a).localeCompare(accountLabel(b));
     case "quota_used_pct": {
       const av = a.quota_used_pct ?? -1;
       const bv = b.quota_used_pct ?? -1;
@@ -70,6 +78,7 @@ function compareMonitors(a: Monitor, b: Monitor, key: SortKey, dir: 1 | -1): num
 
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "name", label: "NAME" },
+  { key: "account_name", label: "ACCOUNT" },
   { key: "quota_used_pct", label: "QUOTA USED" },
   { key: "level", label: "LEVEL" },
   { key: "warehouses", label: "WAREHOUSES" },
@@ -123,10 +132,18 @@ export function MonitorsTable({ items }: Props) {
         const pct = r.quota_used_pct ?? 0;
         const fillClass =
           pct >= 100 ? " is-over" : pct >= 75 ? " is-warn" : "";
+        const acct = accountLabel(r);
         return (
-          <div key={r.name} className="table-row" role="row">
+          <div
+            key={`${acct}::${r.name}`}
+            className="table-row"
+            role="row"
+          >
             <span className="mono monitors-name" title={r.name}>
               {r.name}
+            </span>
+            <span className="mono monitors-account" title={acct}>
+              {acct}
             </span>
             <span className="quota-cell">
               <em>

@@ -7,9 +7,15 @@ type Row = {
 
 type Props = {
   rows: Row[];
+  nameHeader?: string;
+  typeHeader?: string;
 };
 
-export function CreditsTable({ rows }: Props) {
+export function CreditsTable({
+  rows,
+  nameHeader = "NAME",
+  typeHeader = "TYPE",
+}: Props) {
   if (!rows.length) {
     return <div className="info-box">Nenhum recurso no filtro atual.</div>;
   }
@@ -17,8 +23,8 @@ export function CreditsTable({ rows }: Props) {
   return (
     <div className="table cost-table cost-table-credits">
       <div className="table-head">
-        <span>NAME</span>
-        <span>TYPE</span>
+        <span>{nameHeader}</span>
+        <span>{typeHeader}</span>
         <span>TAGS</span>
         <span>CREDITS USED</span>
       </div>

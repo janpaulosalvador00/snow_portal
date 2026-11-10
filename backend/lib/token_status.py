@@ -5,7 +5,8 @@ Postgres advisory lock across processes). It:
 
 * fills ``expires_at`` of OAuth refresh tokens when the stored OAuth blob carries
   ``refresh_token_expires_in`` (only if the blob's refresh token is the same
-  secret, checked by fingerprint);
+  secret, checked by fingerprint); a manual expiry (``expires_at_source =
+  'manual'``) is never touched;
 * flips ``active`` -> ``expired`` once ``expires_at`` has passed, and
   ``expired`` -> ``active`` when ``expires_at`` moved back into the future;
 * rewrites the JSON mirror (token_export) of every row it changed.
@@ -55,6 +56,7 @@ def _refresh_expiry_candidates(cur) -> list[dict]:
         WHERE t.token_type = 'oauth_refresh'
           AND t.status <> 'revoked'
           AND t.expires_at IS NULL
+          AND t.expires_at_source IS DISTINCT FROM 'manual'
           AND c.pat_encrypted IS NOT NULL
         """
     )
@@ -102,8 +104,9 @@ def _sweep_locked() -> dict:
             cur.execute(
                 """
                 UPDATE connection_tokens
-                SET expires_at = %s, updated_at = NOW()
+                SET expires_at = %s, expires_at_source = 'provider', updated_at = NOW()
                 WHERE id = %s AND expires_at IS NULL
+                  AND expires_at_source IS DISTINCT FROM 'manual'
                 RETURNING *
                 """,
                 (expires_at, row["id"]),

@@ -24,6 +24,8 @@ type Props = {
   onUseTokenIdentity: (token: SavedToken, force: boolean) => boolean;
   /** Edit form: preselect this connection's own token and tag it in the list. */
   currentConnectionId?: number;
+  /** False when account/user are fixed (e.g. Tokens drawer): hides "Usar conta e usuário do token". */
+  allowIdentityFill?: boolean;
 };
 
 const COPY: Record<TokenKind, {
@@ -125,6 +127,7 @@ export function TokenSourceField({
   username,
   onUseTokenIdentity,
   currentConnectionId,
+  allowIdentityFill = true,
 }: Props) {
   const ids = tokenFieldIds(idPrefix);
   const copy = COPY[kind];
@@ -308,15 +311,19 @@ export function TokenSourceField({
                   {selected.username} @ {selected.account_identifier}
                 </strong>
                 . O Snowflake só aceita para o mesmo usuário.
-                <div className="row-actions" style={{ marginTop: "0.5rem" }}>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => onUseTokenIdentity(selected, true)}
-                  >
-                    Usar conta e usuário do token
-                  </button>
-                </div>
+                {allowIdentityFill ? (
+                  <div className="row-actions" style={{ marginTop: "0.5rem" }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => onUseTokenIdentity(selected, true)}
+                    >
+                      Usar conta e usuário do token
+                    </button>
+                  </div>
+                ) : (
+                  " Escolha outro ou selecione um arquivo."
+                )}
               </div>
             ) : null}
             {kind === "keypair" ? (

@@ -47,11 +47,13 @@ def _consumption_sql(grain: str, *, absolute_range: bool = False) -> str:
         time_clause = "START_TIME >= %s AND START_TIME < %s"
     else:
         time_clause = "START_TIME >= DATEADD('day', %s, CURRENT_TIMESTAMP())"
+    # Buckets in UTC like the window bounds and *_DAILY_HISTORY.USAGE_DATE (session TZ is
+    # usually America/Los_Angeles, which would shift hours 00–08 UTC into the previous day).
     return f"""
 SELECT
     COALESCE(NULLIF(TRIM(NAME), ''), SERVICE_TYPE, 'UNKNOWN') AS resource_name,
     SERVICE_TYPE,
-    DATE_TRUNC('{grain}', START_TIME) AS period_start,
+    DATE_TRUNC('{grain}', CONVERT_TIMEZONE('UTC', START_TIME)) AS period_start,
     SUM(CREDITS_USED) AS credits_used,
     SUM(CREDITS_USED_COMPUTE) AS credits_compute,
     SUM(CREDITS_USED_CLOUD_SERVICES) AS credits_cloud

@@ -140,6 +140,17 @@ def consumption_payload(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+_STORAGE_USAGE_BYTE_COLUMNS = (
+    "storage_bytes",
+    "stage_bytes",
+    "failsafe_bytes",
+    "hybrid_table_storage_bytes",
+    "archive_storage_cool_bytes",
+    "archive_storage_cold_bytes",
+    "archive_storage_retrieval_temp_bytes",
+)
+
+
 def account_overview(
     creds: dict,
     *,
@@ -180,13 +191,15 @@ def account_overview(
             for _, r in g.iterrows()
         ]
 
+    storage_bytes = None
     storage_tb = None
     storage_note = None
     try:
+        # SELECT * because the optional columns (hybrid/archive) vary by account/edition.
         storage = run_query_with_creds(
             creds,
             """
-            SELECT AVERAGE_DATABASE_BYTES, AVERAGE_FAILSAFE_BYTES, AVERAGE_STAGE_BYTES
+            SELECT *
             FROM SNOWFLAKE.ACCOUNT_USAGE.STORAGE_USAGE
             ORDER BY USAGE_DATE DESC
             LIMIT 1
@@ -195,12 +208,12 @@ def account_overview(
         if not storage.empty:
             storage.columns = [c.lower() for c in storage.columns]
             row = storage.iloc[0]
-            bytes_total = float(
-                (row.get("average_database_bytes") or 0)
-                + (row.get("average_failsafe_bytes") or 0)
-                + (row.get("average_stage_bytes") or 0)
-            )
-            storage_tb = bytes_total / (1024**4)
+            storage_bytes = 0.0
+            for col in _STORAGE_USAGE_BYTE_COLUMNS:
+                value = row.get(col)
+                if value is not None and not pd.isna(value):
+                    storage_bytes += float(value)
+            storage_tb = storage_bytes / (1024**4)
     except Exception as exc:  # noqa: BLE001
         storage_note = friendly_connect_error(exc, auth_method=creds.get("auth_method"))
 
@@ -208,6 +221,7 @@ def account_overview(
         "days": days,
         "total_credits": total,
         "by_service": by_service,
+        "storage_bytes": storage_bytes,
         "storage_tb": storage_tb,
         "storage_note": storage_note,
     }
@@ -563,15 +577,61 @@ def _org_metering_daily(
     end_date: str | None = None,
 ) -> tuple[pd.DataFrame | None, str | None]:
     """Return ORGANIZATION_USAGE daily metering per account and service, or (None, note)."""
-    select = """
+    return _metering_daily(
+        creds,
+        "ACCOUNT_NAME",
+        "SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY",
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+def _account_metering_daily(
+    creds: dict,
+    account_name: str,
+    *,
+    days: int = 28,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame | None:
+    """Connected account's ACCOUNT_USAGE daily metering (same shape as the org frame).
+
+    ORGANIZATION_USAGE lags up to a day behind ACCOUNT_USAGE, so the most recent days of
+    the connected account would be undercounted if read from the org view.
+    """
+    df, note = _metering_daily(
+        creds,
+        "%s",
+        "SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY",
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        lead_params=(account_name,),
+    )
+    return None if note else df
+
+
+def _metering_daily(
+    creds: dict,
+    account_expr: str,
+    view: str,
+    *,
+    days: int,
+    start_date: str | None,
+    end_date: str | None,
+    lead_params: tuple = (),
+) -> tuple[pd.DataFrame | None, str | None]:
+    # account_expr/view are module constants, never user input.
+    select = f"""
                 SELECT
                     USAGE_DATE,
-                    ACCOUNT_NAME,
+                    {account_expr} AS ACCOUNT_NAME,
                     SERVICE_TYPE,
                     SUM(CREDITS_USED) AS credits_used,
                     SUM(CREDITS_USED_COMPUTE) AS credits_compute,
                     SUM(CREDITS_USED_CLOUD_SERVICES) AS credits_cloud
-                FROM SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY
+                FROM {view}
     """
     try:
         if start_date and end_date:
@@ -590,7 +650,7 @@ def _org_metering_daily(
                 ORDER BY USAGE_DATE DESC
                 LIMIT 50000
                 """,
-                (start_d.isoformat(), end_d.isoformat()),
+                (*lead_params, start_d.isoformat(), end_d.isoformat()),
             )
         else:
             df = run_query_with_creds(
@@ -602,7 +662,7 @@ def _org_metering_daily(
                 ORDER BY USAGE_DATE DESC
                 LIMIT 50000
                 """,
-                (-int(days),),
+                (*lead_params, -int(days)),
             )
     except ValueError:
         raise
@@ -653,6 +713,57 @@ def _current_account_name(creds: dict) -> str | None:
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return None
     return str(raw).strip() or None
+
+
+def account_name_from_identifier(identifier: str | None) -> str | None:
+    """Best-effort ACCOUNT_NAME from ``orgname-accountname`` (locators keep their first segment)."""
+    raw = (identifier or "").strip().lower()
+    for suffix in (".snowflakecomputing.com", ".privatelink"):
+        if suffix in raw:
+            raw = raw.split(suffix, 1)[0]
+    if raw.startswith("https://"):
+        raw = raw[len("https://"):]
+    if not raw:
+        return None
+    if "." in raw:
+        return raw.split(".", 1)[0].upper() or None
+    if "-" in raw:
+        # URLs spell underscores in account names as hyphens (org-my-account → MY_ACCOUNT).
+        return raw.split("-", 1)[1].replace("-", "_").upper() or None
+    return raw.upper()
+
+
+def connection_account(creds: dict) -> dict[str, Any]:
+    """Snowflake account this connection lands on (raises when the session cannot open)."""
+    df = run_query_with_creds(
+        creds,
+        """
+        SELECT
+            CURRENT_ACCOUNT_NAME() AS account_name,
+            CURRENT_ORGANIZATION_NAME() AS organization_name,
+            CURRENT_ACCOUNT() AS account_locator
+        """,
+    )
+    row: dict[str, Any] = {}
+    if df is not None and not df.empty:
+        df.columns = [str(c).lower() for c in df.columns]
+        row = df.iloc[0].to_dict()
+
+    def _clean(key: str) -> str | None:
+        v = row.get(key)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        return str(v).strip() or None
+
+    name = _clean("account_name")
+    return {
+        "account_name": name or account_name_from_identifier(creds.get("account")),
+        "organization_name": _clean("organization_name"),
+        "account_locator": _clean("account_locator"),
+        "account_identifier": creds.get("account"),
+        "source": "snowflake" if name else "identifier",
+        "note": None,
+    }
 
 
 def service_types(creds: dict, *, days: int = 365) -> dict[str, Any]:
@@ -795,34 +906,44 @@ def org_consumption_by_account(
     service = None if not service_type or service_type == "All" else service_type
     stack_by = "service" if service is None else "account"
 
-    if service is not None and account is not None:
-        own = _current_account_name(creds)
-        if own and own.upper() == account.upper():
-            try:
-                raw = fetch_consumption_for_creds(
-                    creds,
-                    days=days,
-                    grain="day",
-                    service_type=service,
-                    usage_type=usage_type,
-                    start_date=start_date,
-                    end_date=end_date,
-                )
-            except ValueError:
-                raise
-            except Exception:  # noqa: BLE001
-                raw = None
-            if raw is not None:
-                return {
-                    **consumption_payload(raw),
-                    "available": True,
-                    "stack_by": "resource",
-                    "note": None,
-                }
+    own = _current_account_name(creds)
+    is_own = bool(own and account and own.upper() == account.upper())
+    if service is not None and is_own:
+        try:
+            raw = fetch_consumption_for_creds(
+                creds,
+                days=days,
+                grain="day",
+                service_type=service,
+                usage_type=usage_type,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except ValueError:
+            raise
+        except Exception:  # noqa: BLE001
+            raw = None
+        if raw is not None:
+            return {
+                **consumption_payload(raw),
+                "available": True,
+                "stack_by": "resource",
+                "note": None,
+            }
 
-    df, note = _org_metering_daily(
-        creds, days=days, start_date=start_date, end_date=end_date
+    window = {"days": days, "start_date": start_date, "end_date": end_date}
+    own_df = (
+        _account_metering_daily(creds, own, **window)
+        if own and (account is None or is_own)
+        else None
     )
+    if is_own and own_df is not None:
+        df, note = own_df, None
+    else:
+        df, note = _org_metering_daily(creds, **window)
+        if df is not None and own_df is not None:
+            others = df[df["account_name"].astype(str).str.upper() != own.upper()]
+            df = pd.concat([others, own_df], ignore_index=True)
     if df is None:
         return {
             "available": False,
@@ -834,7 +955,7 @@ def org_consumption_by_account(
         }
 
     if account is not None:
-        df = df[df["account_name"].astype(str) == account]
+        df = df[df["account_name"].astype(str).str.upper() == account.upper()]
     if service is not None:
         df = df[df["service_type"].astype(str) == service]
 

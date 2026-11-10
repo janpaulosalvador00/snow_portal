@@ -100,11 +100,11 @@ def fetch_consumption_for_creds(
 def consumption_payload(df: pd.DataFrame) -> dict[str, Any]:
     """Build chart + summary from the same filtered frame (no top-N chart-only cut)."""
     if df.empty:
-        return {"total_credits": 0, "summary": [], "chart": []}
+        return {"total_credits": 0, "summary": [], "chart": [], "stack_by": "resource"}
     # Drop rows that the Usage Type filter zeroed out (e.g. cloud-only under Compute).
     df = df[df["credits_display"].fillna(0).astype(float) > 1e-12].copy()
     if df.empty:
-        return {"total_credits": 0, "summary": [], "chart": []}
+        return {"total_credits": 0, "summary": [], "chart": [], "stack_by": "resource"}
     summary = summarize_by_resource(df)
     chart = chart_frame(df)
     # Chart and table must share the same resource set (API filters already applied).
@@ -133,6 +133,7 @@ def consumption_payload(df: pd.DataFrame) -> dict[str, Any]:
         "total_credits": total,
         "summary": [_row_summary(r) for _, r in summary.iterrows()],
         "chart": [_row_chart(r) for _, r in chart.iterrows()],
+        "stack_by": "resource",
     }
 
 
@@ -489,6 +490,16 @@ def budgets(creds: dict) -> dict[str, Any]:
     return {"items": items, "note": None}
 
 
+_ORG_METERING_COLUMNS = [
+    "usage_date",
+    "account_name",
+    "service_type",
+    "credits_used",
+    "credits_compute",
+    "credits_cloud",
+]
+
+
 def _org_metering_daily(
     creds: dict,
     *,
@@ -496,7 +507,17 @@ def _org_metering_daily(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> tuple[pd.DataFrame | None, str | None]:
-    """Return ORGANIZATION_USAGE daily metering or (None, note) on failure."""
+    """Return ORGANIZATION_USAGE daily metering per account and service, or (None, note)."""
+    select = """
+                SELECT
+                    USAGE_DATE,
+                    ACCOUNT_NAME,
+                    SERVICE_TYPE,
+                    SUM(CREDITS_USED) AS credits_used,
+                    SUM(CREDITS_USED_COMPUTE) AS credits_compute,
+                    SUM(CREDITS_USED_CLOUD_SERVICES) AS credits_cloud
+                FROM SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY
+    """
     try:
         if start_date and end_date:
             from datetime import date as date_cls
@@ -507,32 +528,24 @@ def _org_metering_daily(
                 raise ValueError("end_date deve ser >= start_date.")
             df = run_query_with_creds(
                 creds,
-                """
-                SELECT
-                    USAGE_DATE,
-                    ACCOUNT_NAME,
-                    SUM(CREDITS_USED) AS credits_used
-                FROM SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY
+                select
+                + """
                 WHERE USAGE_DATE >= %s AND USAGE_DATE <= %s
-                GROUP BY 1, 2
+                GROUP BY 1, 2, 3
                 ORDER BY USAGE_DATE DESC
-                LIMIT 2000
+                LIMIT 50000
                 """,
                 (start_d.isoformat(), end_d.isoformat()),
             )
         else:
             df = run_query_with_creds(
                 creds,
-                """
-                SELECT
-                    USAGE_DATE,
-                    ACCOUNT_NAME,
-                    SUM(CREDITS_USED) AS credits_used
-                FROM SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY
+                select
+                + """
                 WHERE USAGE_DATE >= DATEADD('day', %s, CURRENT_DATE())
-                GROUP BY 1, 2
+                GROUP BY 1, 2, 3
                 ORDER BY USAGE_DATE DESC
-                LIMIT 2000
+                LIMIT 50000
                 """,
                 (-int(days),),
             )
@@ -545,10 +558,100 @@ def _org_metering_daily(
             f"Detalhe: {friendly_connect_error(exc, auth_method=creds.get('auth_method'))}"
         )
     if df is None or df.empty:
-        return pd.DataFrame(columns=["usage_date", "account_name", "credits_used"]), None
+        return pd.DataFrame(columns=_ORG_METERING_COLUMNS), None
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
+    for col in ("credits_used", "credits_compute", "credits_cloud"):
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0).astype(float)
     return df, None
+
+
+def _org_daily_by_account(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse per-service org metering back to one row per day and account."""
+    if df.empty:
+        return pd.DataFrame(columns=["usage_date", "account_name", "credits_used"])
+    return (
+        df.groupby(["usage_date", "account_name"], dropna=False)["credits_used"]
+        .sum()
+        .reset_index()
+        .sort_values("usage_date", ascending=False)
+    )
+
+
+def _usage_column(usage_type: str) -> str:
+    if usage_type == "Compute":
+        return "credits_compute"
+    if usage_type == "Cloud Services":
+        return "credits_cloud"
+    return "credits_used"
+
+
+def _current_account_name(creds: dict) -> str | None:
+    try:
+        adf = run_query_with_creds(creds, "SELECT CURRENT_ACCOUNT_NAME() AS account_name")
+    except Exception:  # noqa: BLE001
+        return None
+    if adf is None or adf.empty:
+        return None
+    adf.columns = [str(c).lower() for c in adf.columns]
+    raw = adf.iloc[0].get("account_name")
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    return str(raw).strip() or None
+
+
+def service_types(creds: dict, *, days: int = 365) -> dict[str, Any]:
+    """Full Service Type catalog plus any extra SERVICE_TYPE seen, flagged when it consumed."""
+    from backend.lib.metering import SERVICE_TYPE_LABELS, _label_service
+
+    consumed: dict[str, float] = {}
+    note = None
+    queries = (
+        """
+        SELECT SERVICE_TYPE, SUM(CREDITS_USED) AS credits_used
+        FROM SNOWFLAKE.ORGANIZATION_USAGE.METERING_DAILY_HISTORY
+        WHERE USAGE_DATE >= DATEADD('day', %s, CURRENT_DATE())
+        GROUP BY 1
+        """,
+        """
+        SELECT SERVICE_TYPE, SUM(CREDITS_USED) AS credits_used
+        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_HISTORY
+        WHERE START_TIME >= DATEADD('day', %s, CURRENT_TIMESTAMP())
+        GROUP BY 1
+        """,
+    )
+    for sql in queries:
+        try:
+            df = run_query_with_creds(creds, sql, (-int(days),))
+        except Exception as exc:  # noqa: BLE001
+            note = friendly_connect_error(exc, auth_method=creds.get("auth_method"))
+            continue
+        note = None
+        if df is not None and not df.empty:
+            df.columns = [str(c).lower() for c in df.columns]
+            for _, r in df.iterrows():
+                st = str(r.get("service_type") or "").strip()
+                if st:
+                    consumed[st] = consumed.get(st, 0.0) + float(r.get("credits_used") or 0)
+        break
+
+    values = set(SERVICE_TYPE_LABELS) | set(consumed)
+    items = sorted(
+        (
+            {
+                "value": v,
+                "label": _label_service(v),
+                "consumed": consumed.get(v, 0.0) > 1e-12,
+            }
+            for v in values
+        ),
+        key=lambda x: x["label"].lower(),
+    )
+    return {
+        "items": [{"value": "All", "label": "All", "consumed": bool(consumed)}, *items],
+        "days": days,
+        "note": note,
+    }
 
 
 def organization_overview(
@@ -564,6 +667,7 @@ def organization_overview(
     if df is None:
         return {"available": False, "items": [], "note": note}
 
+    df = _org_daily_by_account(df)
     if df.empty:
         return {
             "available": True,
@@ -621,8 +725,46 @@ def org_consumption_by_account(
     start_date: str | None = None,
     end_date: str | None = None,
     account_name: str | None = None,
+    service_type: str | None = None,
+    usage_type: str = "Compute",
 ) -> dict[str, Any]:
-    """Consumption payload shaped like warehouse consumption, but stacked by account."""
+    """Consumption payload stacked by service (All), resource (own account) or account.
+
+    ``stack_by`` tells the UI which dimension the chart/table series represent.
+    """
+    from backend.lib.metering import _label_service
+
+    account = None
+    if account_name and account_name not in ("All", "ALL", "__all__"):
+        account = account_name
+    service = None if not service_type or service_type == "All" else service_type
+    stack_by = "service" if service is None else "account"
+
+    if service is not None and account is not None:
+        own = _current_account_name(creds)
+        if own and own.upper() == account.upper():
+            try:
+                raw = fetch_consumption_for_creds(
+                    creds,
+                    days=days,
+                    grain="day",
+                    service_type=service,
+                    usage_type=usage_type,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            except ValueError:
+                raise
+            except Exception:  # noqa: BLE001
+                raw = None
+            if raw is not None:
+                return {
+                    **consumption_payload(raw),
+                    "available": True,
+                    "stack_by": "resource",
+                    "note": None,
+                }
+
     df, note = _org_metering_daily(
         creds, days=days, start_date=start_date, end_date=end_date
     )
@@ -632,53 +774,67 @@ def org_consumption_by_account(
             "total_credits": 0.0,
             "summary": [],
             "chart": [],
+            "stack_by": stack_by,
             "note": note,
         }
 
-    if account_name and account_name not in ("All", "ALL", "__all__"):
-        df = df[df["account_name"].astype(str) == account_name]
+    if account is not None:
+        df = df[df["account_name"].astype(str) == account]
+    if service is not None:
+        df = df[df["service_type"].astype(str) == service]
 
+    col = _usage_column(usage_type)
+    df = df[df[col] > 1e-12] if not df.empty else df
     if df.empty:
         return {
             "available": True,
             "total_credits": 0.0,
             "summary": [],
             "chart": [],
+            "stack_by": stack_by,
             "note": None,
         }
 
-    chart: list[dict[str, Any]] = []
-    for _, r in df.iterrows():
-        d = r.get("usage_date")
-        period = d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]
-        chart.append(
-            {
-                "period_start": period[:10],
-                "resource_name": str(r.get("account_name") or "UNKNOWN"),
-                "credits": float(r.get("credits_used") or 0),
-            }
-        )
+    df = df.copy()
+    if stack_by == "service":
+        df["series"] = df["service_type"].map(_label_service)
+        series_type = "Service"
+    else:
+        df["series"] = df["account_name"].fillna("UNKNOWN").astype(str)
+        series_type = "Account"
+    df["period"] = df["usage_date"].map(
+        lambda d: (d.isoformat() if hasattr(d, "isoformat") else str(d))[:10]
+    )
 
-    by_acct: dict[str, float] = {}
-    for row in chart:
-        by_acct[row["resource_name"]] = by_acct.get(row["resource_name"], 0.0) + row[
-            "credits"
-        ]
+    daily = df.groupby(["period", "series"], dropna=False)[col].sum().reset_index()
+    chart = [
+        {
+            "period_start": r["period"],
+            "resource_name": r["series"],
+            "credits": float(r[col]),
+        }
+        for _, r in daily.sort_values(["period", "series"]).iterrows()
+    ]
+
+    by_series = df.groupby("series", dropna=False)[col].sum()
     summary = [
         {
             "name": name,
-            "type": "Account",
+            "type": series_type,
             "tags": "",
-            "credits_used": round(credits, 4),
+            "credits_used": round(float(credits), 4),
         }
-        for name, credits in sorted(by_acct.items(), key=lambda x: (-x[1], x[0].lower()))
+        for name, credits in sorted(
+            by_series.items(), key=lambda x: (-x[1], str(x[0]).lower())
+        )
     ]
-    total = round(sum(by_acct.values()), 4)
+    total = round(float(by_series.sum()), 4)
     return {
         "available": True,
         "total_credits": total,
         "summary": summary,
         "chart": chart,
+        "stack_by": stack_by,
         "note": None,
     }
 

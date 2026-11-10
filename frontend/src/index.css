@@ -1282,6 +1282,9 @@ select:focus {
   cursor: pointer;
   gap: 0.45rem;
   max-width: 100%;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
 }
 
 .date-range-trigger > span:nth-child(2) {

@@ -169,9 +169,11 @@ def cost_org_consumption(
     account_name: str | None = Query(
         None, description="Snowflake ACCOUNT_NAME; omit or All for all accounts"
     ),
+    service_type: str | None = Query(None, description="SERVICE_TYPE; omit or All for all"),
+    usage_type: str = Query("Compute"),
     user: dict = Depends(get_current_user),
 ):
-    """Consumption stacked by org account (Snowflake All Accounts view)."""
+    """Consumption stacked by service, resource or account (see ``stack_by``)."""
     creds = _creds(user, connection_id)
     _check_window(start_date, end_date)
     return _cached(
@@ -179,6 +181,21 @@ def cost_org_consumption(
         creds,
         "org_consumption",
         cache.org_consumption_params(
-            days=days, start_date=start_date, end_date=end_date, account_name=account_name
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+            account_name=account_name,
+            service_type=service_type,
+            usage_type=usage_type,
         ),
     )
+
+
+@router.get("/service-types")
+def cost_service_types(
+    connection_id: int = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Full Service Type catalog, flagging services that consumed in the last 365 days."""
+    creds = _creds(user, connection_id)
+    return _cached(connection_id, creds, "service_types", {})

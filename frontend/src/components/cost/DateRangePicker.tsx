@@ -6,7 +6,6 @@ export type DateRangeValue =
   | { mode: "custom"; start: string; end: string };
 
 const PRESETS: { days: number; label: string }[] = [
-  { days: 1, label: "Last day" },
   { days: 7, label: "Last 7 days" },
   { days: 28, label: "Last 28 days" },
   { days: 90, label: "Last 3 months" },

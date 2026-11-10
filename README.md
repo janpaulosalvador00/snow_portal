@@ -50,7 +50,7 @@ docker compose exec postgres psql -U snow_portal -d snow_portal \
   -c "SELECT connection_id, connection_name, token_type, status, expires_at, last_refreshed_at FROM v_connection_tokens ORDER BY 1, 2;"
 ```
 
-Espelho em arquivos: `TOKENS_HOST_DIR` (no `.env`) é montado em `/app/tokens` no container `api`. Um JSON por conexão + tipo, `conn<id>_<conta>_<token_type>.json` (permissão 600), com os mesmos metadados e só o valor criptografado. Ao remover a conexão, as linhas viram `revoked` (valor apagado) e os arquivos são excluídos. Outros arquivos da pasta nunca são tocados. Falha ao gravar arquivo só gera log, não quebra a requisição.
+Pasta de tokens: `TOKENS_HOST_DIR` (no `.env`) é montado em `/app/tokens` no container `api` e deve conter **somente os seus arquivos de token/chave de acesso** (ex.: `rsa_key.p8`, PAT em `.txt`). O portal só lê essa pasta, nunca grava nela (os tokens ficam apenas em `connection_tokens`). Arquivos `conn<id>_<conta>_<token_type>.json` de versões antigas são removidos automaticamente na sincronização; nenhum outro arquivo é tocado. Ao remover a conexão, as linhas viram `revoked` (valor apagado).
 
 Reaproveitar token na conexão (PAT e Key pair RSA): em Conexões, escolha **Token salvo** (lista `GET /api/connection-tokens?method=pat|keypair`, só metadados) ou **Arquivo** (arquivos `.p8/.pem/.key/.txt/.token` da mesma pasta via `GET /api/connection-tokens/files`, ou envio do computador). A API recebe `token_id` / `token_file` / `secret`, lê e decifra no servidor e grava o segredo em `connection_tokens` com a origem em `source` + `source_file`. O segredo nunca volta para o navegador.
 

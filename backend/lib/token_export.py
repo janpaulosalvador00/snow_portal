@@ -1,63 +1,40 @@
-"""Mirror connection_tokens rows as JSON files (encrypted value only, never plaintext).
+"""Tokens folder access. The portal never writes token files there.
 
-File writes are best-effort: errors are logged and never propagate to the caller.
-Only files matching ``conn<id>_<account>_<token_type>.json`` are ever created or
-removed, so unrelated files in the export folder are left untouched.
+The folder (``TOKENS_EXPORT_DIR``) holds only the user's own access token / key
+files, read by ``token_sources``. The former JSON mirror of connection_tokens is
+gone: write functions are no-ops and the remove functions only delete legacy
+``conn<id>_<account>_<token_type>.json`` files, never anything else.
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
-import tempfile
-from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Callable
 
 from backend.lib.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 TOKEN_TYPES = ("oauth_access", "oauth_refresh", "pat", "password", "private_key")
-FILE_SCHEMA = "snow_portal.connection_token.v1"
-ENCRYPTION_LABEL = "fernet(sha256(SNOW_PORTAL_SECRET_KEY))"
 
-_FILE_RE = re.compile(
+_LEGACY_FILE_RE = re.compile(
     r"^conn(?P<cid>\d+)_.+_(?P<ttype>" + "|".join(TOKEN_TYPES) + r")\.json$"
 )
 
-_EXPORTED_FIELDS = (
-    "connection_id",
-    "connection_name",
-    "account_identifier",
-    "username",
-    "role_name",
-    "auth_method",
-    "token_type",
-    "status",
-    "fingerprint",
-    "issued_at",
-    "expires_at",
-    "last_refreshed_at",
-    "source",
-    "source_file",
-    "created_at",
-    "updated_at",
-)
 
-
-def export_dir() -> Path | None:
+def tokens_dir() -> Path | None:
+    """Configured tokens folder (read-only use), or None if missing."""
     raw = get_settings().get("tokens_export_dir") or ""
     if not raw:
         return None
     path = Path(raw)
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        logger.warning("token export dir unavailable %s: %s", raw, exc)
-        return None
-    return path
+    return path if path.is_dir() else None
+
+
+def export_dir() -> Path | None:
+    """JSON export is disabled; always None so no file_name is recorded."""
+    return None
 
 
 def file_name(connection_id: int, account: str, token_type: str) -> str:
@@ -65,88 +42,39 @@ def file_name(connection_id: int, account: str, token_type: str) -> str:
     return f"conn{int(connection_id)}_{slug}_{token_type}.json"
 
 
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return value
-
-
 def write_token_file(row: dict) -> str | None:
-    """Atomically write one token row; returns the file name or None."""
-    folder = export_dir()
+    return None
+
+
+def _remove_legacy(should_remove: Callable[[int, str], bool]) -> int:
+    folder = tokens_dir()
     if folder is None:
-        return None
-    name = file_name(row["connection_id"], row.get("account_identifier") or "", row["token_type"])
-    doc = {"schema": FILE_SCHEMA}
-    doc.update({k: _jsonable(row.get(k)) for k in _EXPORTED_FIELDS})
-    doc["encryption"] = ENCRYPTION_LABEL
-    doc["token_encrypted"] = row.get("token_encrypted")
-    tmp_path = None
+        return 0
     try:
-        fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=folder)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(doc, fh, indent=2, ensure_ascii=False)
-            fh.write("\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, folder / name)
-        tmp_path = None
-        return name
+        entries = list(folder.iterdir())
     except OSError as exc:
-        logger.warning("token file write failed %s: %s", name, exc)
-        return None
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        logger.warning("tokens dir listing failed: %s", exc)
+        return 0
+    removed = 0
+    for entry in entries:
+        match = _LEGACY_FILE_RE.match(entry.name)
+        if not match or not should_remove(int(match.group("cid")), entry.name):
+            continue
+        try:
+            if entry.is_file():
+                entry.unlink()
+                removed += 1
+        except OSError as exc:
+            logger.warning("legacy token file remove failed %s: %s", entry.name, exc)
+    return removed
 
 
 def remove_token_files(connection_id: int, *, keep: set[str] | None = None) -> int:
-    """Delete this connection's token files except names in ``keep``."""
-    folder = export_dir()
-    if folder is None:
-        return 0
-    removed = 0
-    try:
-        entries = list(folder.iterdir())
-    except OSError as exc:
-        logger.warning("token export dir listing failed: %s", exc)
-        return 0
-    for entry in entries:
-        match = _FILE_RE.match(entry.name)
-        if not match or int(match.group("cid")) != int(connection_id):
-            continue
-        if keep and entry.name in keep:
-            continue
-        try:
-            entry.unlink()
-            removed += 1
-        except OSError as exc:
-            logger.warning("token file remove failed %s: %s", entry.name, exc)
-    return removed
+    """Delete this connection's legacy JSON files (except names in ``keep``)."""
+    cid, keep = int(connection_id), keep or set()
+    return _remove_legacy(lambda file_cid, name: file_cid == cid and name not in keep)
 
 
 def remove_orphan_files(active_connection_ids: set[int]) -> int:
-    """Delete token files whose connection has no active tokens anymore."""
-    folder = export_dir()
-    if folder is None:
-        return 0
-    removed = 0
-    try:
-        entries = list(folder.iterdir())
-    except OSError as exc:
-        logger.warning("token export dir listing failed: %s", exc)
-        return 0
-    for entry in entries:
-        match = _FILE_RE.match(entry.name)
-        if not match or int(match.group("cid")) in active_connection_ids:
-            continue
-        try:
-            entry.unlink()
-            removed += 1
-        except OSError as exc:
-            logger.warning("token file remove failed %s: %s", entry.name, exc)
-    return removed
+    """Delete legacy JSON files of connections without active tokens."""
+    return _remove_legacy(lambda file_cid, _name: file_cid not in active_connection_ids)

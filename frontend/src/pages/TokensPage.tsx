@@ -7,69 +7,36 @@ import {
   type InventoryTokenType,
   type TokenInventoryResponse,
 } from "../api/tokenInventory";
+import { TokenEditDrawer } from "../components/TokenEditDrawer";
 import { useRefresh } from "../refresh/RefreshContext";
+import {
+  connectionLabel,
+  expiryTone,
+  formatAbsolute,
+  formatRelative,
+  SOURCE_LABELS,
+  STATUS_LABELS,
+  statusBadgeClass,
+  TYPE_LABELS,
+} from "./tokensFormat";
 import "./TokensPage.css";
 
-const TYPE_LABELS: Record<InventoryTokenType, string> = {
-  oauth_access: "OAuth access",
-  oauth_refresh: "OAuth refresh",
-  pat: "PAT",
-  password: "Senha",
-  private_key: "Chave privada",
-};
+type PageNotice = { kind: "ok" | "error"; text: string } | null;
 
-const STATUS_LABELS: Record<InventoryTokenStatus, string> = {
-  active: "Ativo",
-  expired: "Expirado",
-  revoked: "Revogado",
-};
-
-const SOURCE_LABELS: Record<string, string> = {
-  oauth: "OAuth",
-  typed: "digitado",
-  upload: "upload",
-  folder: "pasta de tokens",
-  saved_token: "token salvo",
-};
-
-const EXPIRING_SOON_MS = 7 * 24 * 60 * 60 * 1000;
-
-const absoluteFormat = new Intl.DateTimeFormat("pt-BR", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-const relativeFormat = new Intl.RelativeTimeFormat("pt-BR", { numeric: "auto" });
-
-function formatAbsolute(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : absoluteFormat.format(d);
-}
-
-function formatRelative(iso: string, now: number): string {
-  const diffSec = (new Date(iso).getTime() - now) / 1000;
-  const abs = Math.abs(diffSec);
-  if (abs < 60) return relativeFormat.format(Math.round(diffSec), "second");
-  if (abs < 3600) return relativeFormat.format(Math.round(diffSec / 60), "minute");
-  if (abs < 86400) return relativeFormat.format(Math.round(diffSec / 3600), "hour");
-  if (abs < 86400 * 60) return relativeFormat.format(Math.round(diffSec / 86400), "day");
-  return relativeFormat.format(Math.round(diffSec / (86400 * 30)), "month");
-}
-
-function expiryTone(token: InventoryToken, now: number): "past" | "soon" | "ok" {
-  if (!token.expires_at) return "ok";
-  const ms = new Date(token.expires_at).getTime() - now;
-  if (ms <= 0) return "past";
-  return ms <= EXPIRING_SOON_MS ? "soon" : "ok";
-}
-
-function statusBadgeClass(status: InventoryTokenStatus): string {
-  if (status === "active") return "is-active";
-  if (status === "expired") return "is-token-expired";
-  return "is-inactive";
+/** Banner after returning from "Reconectar via browser" (/tokens?oauth=ok|error). */
+function readOAuthReturn(): PageNotice {
+  const params = new URLSearchParams(window.location.search);
+  const oauth = params.get("oauth");
+  if (!oauth) return null;
+  window.history.replaceState({}, "", window.location.pathname);
+  if (oauth === "ok") {
+    return { kind: "ok", text: "Login Snowflake via browser concluído. Tokens OAuth atualizados." };
+  }
+  const detail = params.get("detail");
+  return {
+    kind: "error",
+    text: `Falha no login Snowflake via browser${detail ? `: ${detail}` : "."}`,
+  };
 }
 
 export function TokensPage() {
@@ -83,6 +50,8 @@ export function TokensPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | InventoryTokenStatus>("all");
   const [reloadKey, setReloadKey] = useState(0);
   const [now, setNow] = useState(() => Date.now());
+  const [editing, setEditing] = useState<InventoryToken | null>(null);
+  const [notice, setNotice] = useState<PageNotice>(readOAuthReturn);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -108,16 +77,38 @@ export function TokensPage() {
     return () => controller.abort();
   }, [includeRevoked, refreshToken, reloadKey]);
 
+  // Keep an open drawer in sync with reloads (a revoked row hidden by the filter keeps its copy).
+  useEffect(() => {
+    if (!data) return;
+    setEditing((cur) => (cur ? (data.tokens.find((t) => t.id === cur.id) ?? cur) : cur));
+  }, [data]);
+
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
+  const closeDrawer = useCallback(() => setEditing(null), []);
+
+  const onTokenChanged = useCallback(
+    (token: InventoryToken | null) => {
+      if (token) setEditing(token);
+      reload();
+    },
+    [reload],
+  );
+
+  const onTokenDeleted = useCallback(
+    (message: string) => {
+      setEditing(null);
+      setNotice({ kind: "ok", text: message });
+      reload();
+    },
+    [reload],
+  );
 
   const tokens = useMemo(() => data?.tokens ?? [], [data]);
 
   const connectionOptions = useMemo(() => {
     const seen = new Map<number, string>();
     for (const t of tokens) {
-      if (!seen.has(t.connection_id)) {
-        seen.set(t.connection_id, t.connection_name || `Conexão #${t.connection_id}`);
-      }
+      if (!seen.has(t.connection_id)) seen.set(t.connection_id, connectionLabel(t));
     }
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1], "pt-BR"));
   }, [tokens]);
@@ -149,7 +140,8 @@ export function TokensPage() {
           <h1>Tokens</h1>
           <p className="tokens-lead">
             Credenciais salvas das conexões (somente metadados — o valor do token nunca é
-            exibido). O status é reavaliado automaticamente a cada{" "}
+            exibido). Use <strong>Editar</strong> para trocar o valor, ajustar a conexão, registrar
+            a validade, renovar ou revogar. O status é reavaliado automaticamente a cada{" "}
             {Math.round((data?.sweep_interval_sec ?? 300) / 60)} min.
           </p>
         </div>
@@ -251,6 +243,23 @@ export function TokensPage() {
             </div>
           </div>
 
+          {notice ? (
+            <div
+              className={`tokens-notice ${notice.kind === "ok" ? "is-ok" : "is-error"}`}
+              role={notice.kind === "error" ? "alert" : "status"}
+            >
+              <span>{notice.text}</span>
+              <button
+                type="button"
+                className="btn ghost btn-inline"
+                onClick={() => setNotice(null)}
+                aria-label="Dispensar aviso"
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
+
           {error ? (
             <div className="tokens-error" role="alert">
               <span>{error}</span>
@@ -267,55 +276,67 @@ export function TokensPage() {
             aria-busy={loading}
           >
             <div className="admin-table-head" role="row">
-              <span role="columnheader">Conexão</span>
-              <span role="columnheader">Conta</span>
-              <span role="columnheader">Usuário</span>
-              <span role="columnheader">Role</span>
-              <span role="columnheader">Método</span>
-              <span role="columnheader">Tipo</span>
+              <span role="columnheader">Conexão / conta</span>
+              <span role="columnheader">Usuário / role</span>
+              <span role="columnheader">Tipo / método</span>
               <span role="columnheader">Status</span>
-              <span role="columnheader">Emitido em</span>
               <span role="columnheader">Expira em</span>
-              <span role="columnheader">Última renovação</span>
-              <span role="columnheader">Fingerprint</span>
-              <span role="columnheader">Arquivo</span>
+              <span role="columnheader">Emitido / renovado</span>
+              <span role="columnheader">Fingerprint / origem</span>
+              <span role="columnheader" className="tokens-actions-cell">
+                Ações
+              </span>
             </div>
             {filtered.map((t) => {
               const tone = expiryTone(t, now);
+              const name = connectionLabel(t);
+              const selected = editing?.id === t.id;
               return (
-                <div key={t.id} className="admin-table-row" role="row">
-                  <span className="channels-truncate" title={t.team_name || undefined}>
-                    {t.connection_name || `Conexão #${t.connection_id}`}
-                    {!t.connection_exists ? (
-                      <span className="tokens-muted"> (removida)</span>
-                    ) : null}
+                <div
+                  key={t.id}
+                  className={`admin-table-row${selected ? " is-selected" : ""}`}
+                  role="row"
+                >
+                  <span className="tokens-cell-stack" role="cell">
+                    <span className="channels-truncate" title={t.team_name ? `${name} · ${t.team_name}` : name}>
+                      {name}
+                      {!t.connection_exists ? <span className="tokens-muted"> (removida)</span> : null}
+                    </span>
+                    <small className="channels-truncate mono tokens-muted" title={t.account_identifier || ""}>
+                      {t.account_identifier || "—"}
+                    </small>
                   </span>
-                  <span className="channels-truncate mono" title={t.account_identifier || ""}>
-                    {t.account_identifier || "—"}
+                  <span className="tokens-cell-stack" role="cell">
+                    <span className="channels-truncate" title={t.username || ""}>
+                      {t.username || "—"}
+                    </span>
+                    <small className="channels-truncate tokens-muted" title={t.role_name || ""}>
+                      {t.role_name || "—"}
+                    </small>
                   </span>
-                  <span className="channels-truncate" title={t.username || ""}>
-                    {t.username || "—"}
+                  <span className="tokens-cell-stack" role="cell">
+                    <span>
+                      <span className="admin-badge is-support">{TYPE_LABELS[t.token_type]}</span>
+                    </span>
+                    <small className="channels-truncate tokens-muted" title={t.auth_method_label || t.auth_method || ""}>
+                      {t.auth_method_label || t.auth_method || "—"}
+                    </small>
                   </span>
-                  <span className="channels-truncate" title={t.role_name || ""}>
-                    {t.role_name || "—"}
-                  </span>
-                  <span className="channels-truncate tokens-muted" title={t.auth_method || ""}>
-                    {t.auth_method_label || t.auth_method || "—"}
-                  </span>
-                  <span>
-                    <span className="admin-badge is-support">{TYPE_LABELS[t.token_type]}</span>
-                  </span>
-                  <span>
+                  <span role="cell">
                     <span className={`admin-badge ${statusBadgeClass(t.status)}`}>
                       {STATUS_LABELS[t.status]}
                     </span>
                   </span>
-                  <span className="tokens-muted">{formatAbsolute(t.issued_at)}</span>
-                  <span className="tokens-expiry">
+                  <span className="tokens-expiry" role="cell">
                     {t.expires_at ? (
                       <>
                         <span className={`tokens-expiry-rel is-${tone}`}>
                           {formatRelative(t.expires_at, now)}
+                          {t.expires_at_source === "manual" ? (
+                            <span className="tokens-manual-tag" title="Validade informada manualmente">
+                              manual
+                            </span>
+                          ) : null}
                         </span>
                         <small className="tokens-muted">{formatAbsolute(t.expires_at)}</small>
                       </>
@@ -323,23 +344,43 @@ export function TokensPage() {
                       <span className="tokens-muted tokens-note">{t.expiry_note || "—"}</span>
                     )}
                   </span>
-                  <span className="tokens-muted">
-                    {t.status === "revoked" && t.revoked_at
-                      ? `Revogado ${formatAbsolute(t.revoked_at)}`
-                      : formatAbsolute(t.last_refreshed_at)}
+                  <span className="tokens-cell-stack tokens-muted" role="cell">
+                    <span>{formatAbsolute(t.issued_at)}</span>
+                    <small>
+                      {t.status === "revoked" && t.revoked_at
+                        ? `Revogado ${formatAbsolute(t.revoked_at)}`
+                        : t.last_refreshed_at
+                          ? `Renovado ${formatAbsolute(t.last_refreshed_at)}`
+                          : "Nunca renovado"}
+                    </small>
                   </span>
-                  <span className="mono tokens-muted">{t.fingerprint_short || "—"}</span>
-                  <span
-                    className="channels-truncate mono tokens-muted"
-                    title={[
-                      t.file_name,
-                      t.source ? `origem: ${SOURCE_LABELS[t.source] || t.source}` : null,
-                      t.source_file,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  >
-                    {t.file_name || "—"}
+                  <span className="tokens-cell-stack" role="cell">
+                    <span className="mono tokens-muted">
+                      {t.fingerprint_short ? `#${t.fingerprint_short}` : "—"}
+                    </span>
+                    <small
+                      className="channels-truncate tokens-muted"
+                      title={[
+                        t.source ? `origem: ${SOURCE_LABELS[t.source] || t.source}` : null,
+                        t.source_file,
+                        t.file_name,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    >
+                      {t.source_file || (t.source ? SOURCE_LABELS[t.source] || t.source : "—")}
+                    </small>
+                  </span>
+                  <span className="tokens-actions-cell" role="cell">
+                    <button
+                      type="button"
+                      className="btn tokens-edit-btn"
+                      onClick={() => setEditing(t)}
+                      aria-haspopup="dialog"
+                      aria-label={`Editar ${TYPE_LABELS[t.token_type]} de ${name}`}
+                    >
+                      Editar
+                    </button>
                   </span>
                 </div>
               );
@@ -355,6 +396,17 @@ export function TokensPage() {
           </div>
         </section>
       </div>
+
+      {editing ? (
+        <TokenEditDrawer
+          key={editing.id}
+          token={editing}
+          now={now}
+          onClose={closeDrawer}
+          onChanged={onTokenChanged}
+          onDeleted={onTokenDeleted}
+        />
+      ) : null}
     </div>
   );
 }

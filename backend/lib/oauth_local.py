@@ -123,6 +123,7 @@ def create_oauth_pending(
     role_name: str | None,
     team_id: int | None,
     connection_id: int | None = None,
+    return_to: str | None = None,
 ) -> dict[str, str]:
     redirect_uri = oauth_redirect_uri()
     client_id = active_client_id()
@@ -159,6 +160,7 @@ def create_oauth_pending(
         "role_name": role_name or None,
         "team_id": team_id,
         "connection_id": connection_id,
+        "return_to": return_to,
         "code_verifier": verifier,
         "redirect_uri": redirect_uri,
         "client_id": client_id,

@@ -109,6 +109,11 @@ class OAuthStart(BaseModel):
     role_name: str | None = None
     team_id: int | None = None
     connection_id: int | None = None
+    return_to: str | None = None
+
+
+# Portal pages the OAuth callback may send the browser back to.
+OAUTH_RETURN_PATHS = ("/conexoes", "/tokens")
 
 
 class ConnectionUpdate(SecretInput):
@@ -500,6 +505,7 @@ def oauth_start(body: OAuthStart, user: dict = Depends(get_current_user)):
             role_name=body.role_name,
             team_id=team_id,
             connection_id=body.connection_id,
+            return_to=body.return_to if body.return_to in OAUTH_RETURN_PATHS else None,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -525,6 +531,7 @@ def oauth_callback(
 
     portal = oauth_local.portal_public_url().rstrip("/")
     fail_base = f"{portal}/conexoes?oauth=error"
+    return_path = "/conexoes"
 
     if error:
         msg = error_description or error
@@ -556,6 +563,10 @@ def oauth_callback(
             redirect_url=f"{fail_base}&detail={urllib.parse.quote(msg)}",
             delay_ms=2500,
         )
+
+    if pending.get("return_to") in OAUTH_RETURN_PATHS:
+        return_path = pending["return_to"]
+        fail_base = f"{portal}{return_path}?oauth=error"
 
     try:
         tokens = oauth_local.exchange_authorization_code(
@@ -638,7 +649,7 @@ def oauth_callback(
             delay_ms=3500,
         )
 
-    ok_url = f"{portal}/conexoes?oauth=ok&connection_id={conn_id}"
+    ok_url = f"{portal}{return_path}?oauth=ok&connection_id={conn_id}"
     return _oauth_result_page(
         title="Conectado com sucesso",
         body=f"Conta {pending['account']} autenticada. Voltando ao portal…",

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.lib import db
+from backend.lib import cost_queries, db
 from backend.lib import snowflake_cache as cache
 from backend.lib.snowflake_client import friendly_connect_error
 from backend.security import get_current_user
@@ -35,6 +35,28 @@ def _cached(connection_id: int, creds: dict, dataset: str, params: dict) -> dict
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/connection-account")
+def cost_connection_account(
+    connection_id: int = Query(...),
+    user: dict = Depends(get_current_user),
+):
+    """Snowflake account (ACCOUNT_NAME) this connection belongs to, for the account pill."""
+    creds = _creds(user, connection_id)
+    try:
+        return cache.cached_fetch(connection_id, "connection_account", {}, creds=creds)
+    except Exception as exc:  # noqa: BLE001
+        # Not cached: next call retries Snowflake once the session works again.
+        return {
+            "account_name": cost_queries.account_name_from_identifier(creds.get("account")),
+            "organization_name": None,
+            "account_locator": None,
+            "account_identifier": creds.get("account"),
+            "source": "identifier",
+            "note": friendly_connect_error(exc, auth_method=creds.get("auth_method")),
+            "cached": False,
+        }
 
 
 @router.get("/consumption")

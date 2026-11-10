@@ -18,7 +18,7 @@ import {
 import { CreditsTable } from "../components/cost/CreditsTable";
 import { DateRangePicker, type DateRangeValue } from "../components/cost/DateRangePicker";
 import { ErrorBanner } from "../components/cost/ErrorBanner";
-import { FilterPill } from "../components/cost/FilterPill";
+import { FilterPill, type FilterPillOption } from "../components/cost/FilterPill";
 import { MonitorsPanel } from "../components/cost/MonitorsPanel";
 import { StackedConsumptionChart } from "../components/cost/StackedConsumptionChart";
 import { useRefresh } from "../refresh/RefreshContext";
@@ -60,15 +60,15 @@ const WAREHOUSE_SOURCE_HINTS: Partial<Record<StackBy, { label: string; text: str
     label: "ACCOUNT_USAGE",
     text:
       "Fonte: ACCOUNT_USAGE.METERING_HISTORY da conta conectada (atraso de até ~3h). " +
-      "A visão por conta usa ORGANIZATION_USAGE.METERING_DAILY_HISTORY, que pode atrasar " +
-      "24–72h — os totais de Warehouse podem diferir temporariamente entre as visões.",
+      "Na visão por conta, as demais contas vêm de ORGANIZATION_USAGE.METERING_DAILY_HISTORY, " +
+      "que pode atrasar até ~24h nos dias mais recentes.",
   },
   account: {
     label: "ORGANIZATION_USAGE",
     text:
-      "Fonte: ORGANIZATION_USAGE.METERING_DAILY_HISTORY (consolidado diário da organização, " +
-      "atraso de 24–72h). A visão por recurso usa ACCOUNT_USAGE.METERING_HISTORY da conta " +
-      "conectada, mais recente — os totais de Warehouse podem diferir temporariamente.",
+      "Conta conectada: ACCOUNT_USAGE.METERING_DAILY_HISTORY (atraso de até ~3h). Demais contas: " +
+      "ORGANIZATION_USAGE.METERING_DAILY_HISTORY (consolidado da organização, atraso de até " +
+      "~24h) — os dias mais recentes dessas contas podem subir depois.",
   },
 };
 
@@ -79,14 +79,63 @@ type OrgAccountsResp = {
 };
 
 const ALL_ACCOUNTS = "__all__";
+/** Connection changed and its Snowflake account is still being resolved. */
+const PENDING_ACCOUNT = "__pending__";
+/** Connection account could not be resolved — never show another account in its place. */
+const UNKNOWN_ACCOUNT = "__unknown__";
+
+type ConnAccount = {
+  account_name: string | null;
+  organization_name: string | null;
+  account_locator: string | null;
+  account_identifier?: string | null;
+  source: "snowflake" | "identifier";
+  note?: string | null;
+};
+
+/** Org account list with the connection's own account guaranteed (stale identifier fallbacks mapped). */
+function accountsWithRelated(
+  list: string[],
+  related: string | null,
+  identifier: string | undefined,
+): string[] {
+  const ident = identifier?.trim().toUpperCase();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of [...list, ...(related ? [related] : [])]) {
+    const name = related && ident && raw.trim().toUpperCase() === ident ? related : raw.trim();
+    const key = name.toUpperCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+const sameAccount = (a: string | null | undefined, b: string | null | undefined) =>
+  !!a && !!b && a.toUpperCase() === b.toUpperCase();
 
 type AccountOverview = {
   days: number;
   total_credits: number;
   by_service: { label: string; credits: number }[];
+  storage_bytes?: number | null;
   storage_tb: number | null;
   storage_note: string | null;
 };
+
+function formatStorage(o: AccountOverview): string {
+  const bytes = o.storage_bytes ?? (o.storage_tb != null ? o.storage_tb * 1024 ** 4 : null);
+  if (bytes == null) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let value = bytes;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
+}
 
 type AnomaliesResp = {
   series?: {
@@ -147,12 +196,10 @@ type OrgResp = {
 };
 
 const DEFAULT_SERVICE_TYPE = "WAREHOUSE_METERING";
-const DEFAULT_SERVICE_OPTIONS = [
+const DEFAULT_SERVICE_OPTIONS: FilterPillOption[] = [
   { value: "All", label: "All" },
   { value: DEFAULT_SERVICE_TYPE, label: "Warehouse" },
 ];
-/** Suffix on Service Type options that consumed credits (native select cannot style rows). */
-const CONSUMED_MARK = " •";
 
 export function CostManagementPage() {
   const [connections, setConnections] = useState<Conn[]>([]);
@@ -163,13 +210,25 @@ export function CostManagementPage() {
   const [serviceType, setServiceType] = useState(DEFAULT_SERVICE_TYPE);
   const [serviceOptions, setServiceOptions] = useState(DEFAULT_SERVICE_OPTIONS);
   const [resourceFilter, setResourceFilter] = useState("All");
-  /** Snowflake-style All Accounts filter (`__all__` or ACCOUNT_NAME). */
-  const [orgAccountFilter, setOrgAccountFilter] = useState(ALL_ACCOUNTS);
+  /** Account the connection lands on (`/api/cost/connection-account`), keyed by connection. */
+  const [connAccount, setConnAccount] = useState<{ connId: number; info: ConnAccount | null } | null>(
+    null,
+  );
+  /**
+   * Right-hand account pick, owned by one connection: `__all__`, ACCOUNT_NAME or `__unknown__`.
+   * Any other connection id means "not picked yet" and resolves to the connection's account.
+   */
+  const [accountPick, setAccountPick] = useState<{ connId: number | ""; value: string }>({
+    connId: "",
+    value: ALL_ACCOUNTS,
+  });
   const [orgAccounts, setOrgAccounts] = useState<string[]>([]);
   const [orgAccountsNote, setOrgAccountsNote] = useState<string | null>(null);
   /** Dimension the Consumption chart/table series represent (from the API `stack_by`). */
   const [stackBy, setStackBy] = useState<StackBy>("service");
   const [data, setData] = useState<Consumption | null>(null);
+  /** UTC window (inclusive YYYY-MM-DD) the current `data` was fetched for. */
+  const [dataWindow, setDataWindow] = useState<{ start: string; end: string } | null>(null);
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [anom, setAnom] = useState<AnomaliesResp | null>(null);
   const [monitors, setMonitors] = useState<MonitorsResp | null>(null);
@@ -263,7 +322,8 @@ export function CostManagementPage() {
         setServiceOptions(
           res.items.map((o) => ({
             value: o.value,
-            label: o.consumed && o.value !== "All" ? `${o.label}${CONSUMED_MARK}` : o.label,
+            label: o.label,
+            consumed: Boolean(o.consumed) && o.value !== "All",
           })),
         );
       })
@@ -274,6 +334,49 @@ export function CostManagementPage() {
       cancelled = true;
     };
   }, [connectionId, refreshToken]);
+
+  // Resolve which Snowflake account the selected connection belongs to (cached server-side).
+  useEffect(() => {
+    if (!connectionId) {
+      setConnAccount(null);
+      return;
+    }
+    const id = Number(connectionId);
+    let cancelled = false;
+    void api<ConnAccount>(`/api/cost/connection-account?connection_id=${id}`)
+      .then((info) => {
+        if (!cancelled) setConnAccount({ connId: id, info });
+      })
+      .catch(() => {
+        if (!cancelled) setConnAccount({ connId: id, info: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionId, refreshToken]);
+
+  /** `undefined` while resolving, `null` when the account could not be identified. */
+  const relatedAccount: string | null | undefined =
+    connectionId !== "" && connAccount?.connId === connectionId
+      ? connAccount.info?.account_name?.trim() || null
+      : undefined;
+  const accountFilter =
+    connectionId !== "" && accountPick.connId === connectionId
+      ? accountPick.value
+      : PENDING_ACCOUNT;
+
+  // Every connection change (pick, restore, initial load) lands on the connection's own account.
+  useEffect(() => {
+    if (connectionId === "" || relatedAccount === undefined) return;
+    if (accountPick.connId === connectionId) return;
+    setAccountPick({ connId: connectionId, value: relatedAccount ?? UNKNOWN_ACCOUNT });
+  }, [connectionId, relatedAccount, accountPick.connId]);
+
+  function selectConnection(id: number | "") {
+    setAccountPick({ connId: "", value: PENDING_ACCOUNT });
+    setConnectionId(id);
+    setActiveConnectionId(id === "" ? null : id);
+  }
 
   async function load() {
     if (!connectionId) {
@@ -290,6 +393,14 @@ export function CostManagementPage() {
       setOrgAccountsNote(null);
       setStackBy("service");
       setLoading(false);
+      return;
+    }
+    if (tab === "Consumption" && accountFilter === PENDING_ACCOUNT) {
+      // Re-runs once the connection's account resolves; never query with a stale account.
+      loadAbortRef.current?.abort();
+      loadAbortRef.current = null;
+      setErr(null);
+      setLoading(true);
       return;
     }
     loadAbortRef.current?.abort();
@@ -336,29 +447,33 @@ export function CostManagementPage() {
         qs.set("grain", "day");
         qs.set("service_type", serviceType);
         // Resources filter is client-side on the last response (no re-fetch needed).
-        const fallbackName =
-          connections.find((c) => c.id === id)?.name ||
-          connections.find((c) => c.id === id)?.account_identifier ||
-          undefined;
+        const related = relatedAccount ?? null;
         const accountsRes = await api<OrgAccountsResp>(`/api/cost/org-accounts?${qs}`, {
           signal,
         });
         if (signal.aborted) return;
-        const names =
-          accountsRes.accounts?.length > 0
-            ? accountsRes.accounts
-            : fallbackName
-              ? [fallbackName]
-              : [];
+        const names = accountsWithRelated(
+          accountsRes.accounts ?? [],
+          related,
+          connections.find((c) => c.id === id)?.account_identifier,
+        );
         setOrgAccounts(names);
         setOrgAccountsNote(accountsRes.note);
-        // Drop stale account pick if the org list no longer includes it.
-        const accountOk =
-          orgAccountFilter === ALL_ACCOUNTS || names.includes(orgAccountFilter);
-        const effectiveAccount = accountOk ? orgAccountFilter : ALL_ACCOUNTS;
-        if (!accountOk) setOrgAccountFilter(ALL_ACCOUNTS);
+        // A pick the org list no longer includes falls back to the connection's account.
+        let effectiveAccount = accountFilter;
+        if (
+          effectiveAccount !== ALL_ACCOUNTS &&
+          effectiveAccount !== UNKNOWN_ACCOUNT &&
+          !names.some((n) => sameAccount(n, effectiveAccount))
+        ) {
+          effectiveAccount = related ?? UNKNOWN_ACCOUNT;
+          setAccountPick({ connId: id, value: effectiveAccount });
+        }
+        const isOwnAccount =
+          effectiveAccount === UNKNOWN_ACCOUNT || sameAccount(effectiveAccount, related);
 
-        const canUseOrg = accountsRes.available && names.length > 0;
+        const canUseOrg =
+          accountsRes.available && names.length > 0 && effectiveAccount !== UNKNOWN_ACCOUNT;
         if (canUseOrg) {
           const orgQs = new URLSearchParams(qs);
           if (effectiveAccount !== ALL_ACCOUNTS) {
@@ -368,7 +483,8 @@ export function CostManagementPage() {
             signal,
           });
           if (signal.aborted) return;
-          if (res.available === false) {
+          // Own account without ORGANIZATION_USAGE rows: its ACCOUNT_USAGE is the source of truth.
+          if (res.available === false || (isOwnAccount && !res.summary?.length)) {
             // Fall back to single-account warehouse metering.
             const wh = await api<Consumption>(`/api/cost/consumption?${qs}`, { signal });
             if (signal.aborted) return;
@@ -384,6 +500,7 @@ export function CostManagementPage() {
           setData(res);
           setStackBy(res.stack_by ?? "resource");
         }
+        setDataWindow({ start: startIso, end: endIso });
       } else if (tab === "Account Overview") {
         const res = await api<AccountOverview>(`/api/cost/account-overview?${qs}`, {
           signal,
@@ -446,7 +563,7 @@ export function CostManagementPage() {
       loadAbortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, tab, dateKey, usageType, serviceType, orgAccountFilter, refreshToken]);
+  }, [connectionId, tab, dateKey, usageType, serviceType, accountFilter, refreshToken]);
 
   // Changing Service Type invalidates resource picks from other service types.
   useEffect(() => {
@@ -491,13 +608,23 @@ export function CostManagementPage() {
       byPeriod[key][row.resource_name] =
         Number(byPeriod[key][row.resource_name] || 0) + row.credits;
     }
+    // Days without metering rows still belong to the window (Snowsight shows them as 0).
+    if (grain === "day" && dataWindow) {
+      const day = new Date(`${dataWindow.start}T00:00:00Z`);
+      const last = new Date(`${dataWindow.end}T00:00:00Z`);
+      while (day <= last) {
+        const key = day.toISOString().slice(0, 10);
+        if (!byPeriod[key]) byPeriod[key] = { period: key };
+        day.setUTCDate(day.getUTCDate() + 1);
+      }
+    }
     return {
       rows: Object.values(byPeriod).sort((a, b) =>
         String(a.period).localeCompare(String(b.period)),
       ),
       resources: Array.from(resources),
     };
-  }, [data, grain, allowedResources]);
+  }, [data, dataWindow, grain, allowedResources]);
 
   const resourceOptions = useMemo(() => {
     const names = data?.summary?.map((r) => r.name) || [];
@@ -530,6 +657,118 @@ export function CostManagementPage() {
     tab === "Anomalies" ||
     tab === "Organization Overview";
 
+  const relatedInfo = connAccount?.connId === connectionId ? connAccount.info : null;
+  const relatedLabel =
+    relatedAccount === undefined
+      ? "Identificando conta…"
+      : relatedAccount ?? "Conta não identificada";
+  const accountHint = activeConn
+    ? [
+        `Conta da conexão ${activeConn.name}: ${relatedLabel}`,
+        relatedInfo?.organization_name && relatedAccount
+          ? `${relatedInfo.organization_name}.${relatedAccount}`
+          : null,
+        relatedInfo?.account_locator ? `locator ${relatedInfo.account_locator}` : null,
+        relatedInfo?.source === "identifier"
+          ? `derivada do identificador ${relatedInfo.account_identifier ?? activeConn.account_identifier}`
+          : null,
+        relatedInfo?.note || null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : undefined;
+
+  /** Org Overview filters its rows client-side by the same account pick. */
+  const orgAccountNames = useMemo(
+    () =>
+      accountsWithRelated(
+        Array.from(new Set((org?.items ?? []).map((r) => String(r.account_name ?? "")))),
+        relatedAccount ?? null,
+        activeConn?.account_identifier,
+      ),
+    [org, relatedAccount, activeConn?.account_identifier],
+  );
+  const orgItems = useMemo(() => {
+    const items = org?.items ?? [];
+    if (
+      accountFilter === ALL_ACCOUNTS ||
+      accountFilter === PENDING_ACCOUNT ||
+      accountFilter === UNKNOWN_ACCOUNT
+    ) {
+      return items;
+    }
+    return items.filter((r) => sameAccount(r.account_name, accountFilter));
+  }, [org, accountFilter]);
+
+  /** Account pill: editable where the data spans the org, locked to the connection elsewhere. */
+  const accountEditable = tab === "Consumption" || tab === "Organization Overview";
+  const accountOptions: { value: string; label: string }[] = (() => {
+    if (accountFilter === PENDING_ACCOUNT) {
+      return [{ value: PENDING_ACCOUNT, label: relatedLabel }];
+    }
+    if (!accountEditable) return [{ value: accountFilter, label: relatedLabel }];
+    const names = tab === "Consumption" ? orgAccounts : orgAccountNames;
+    const list = accountsWithRelated(names, relatedAccount ?? null, activeConn?.account_identifier);
+    return [
+      { value: ALL_ACCOUNTS, label: "All Accounts" },
+      ...(accountFilter === UNKNOWN_ACCOUNT
+        ? [{ value: UNKNOWN_ACCOUNT, label: "Conta não identificada" }]
+        : []),
+      ...list.map((n) => ({ value: n, label: n })),
+    ];
+  })();
+  const accountSelectValue =
+    accountEditable && accountOptions.some((o) => o.value === accountFilter)
+      ? accountFilter
+      : accountOptions.find((o) => sameAccount(o.value, accountFilter))?.value ??
+        accountOptions[0]?.value ??
+        "";
+
+  const connectionPair = activeConn ? (
+    <>
+      <span className="account-chip">
+        <select
+          className="account-chip-select"
+          value={String(connectionId)}
+          onChange={(e) => selectConnection(Number(e.target.value))}
+          aria-label="Connection"
+        >
+          {connections.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </span>
+      <span
+        className={`account-chip account-chip-all${
+          accountFilter === PENDING_ACCOUNT ||
+          accountFilter === UNKNOWN_ACCOUNT ||
+          (!accountEditable && relatedAccount === null)
+            ? " is-unresolved"
+            : ""
+        }`}
+        title={[accountHint, tab === "Consumption" ? orgAccountsNote : null]
+          .filter(Boolean)
+          .join("\n")}
+      >
+        <select
+          className="account-chip-select"
+          value={accountSelectValue}
+          onChange={(e) => setAccountPick({ connId: connectionId, value: e.target.value })}
+          disabled={!accountEditable || accountFilter === PENDING_ACCOUNT}
+          aria-label="Account"
+        >
+          {accountOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </span>
+    </>
+  ) : null;
+
   const headerCreditsUsed =
     tab === "Consumption" && data
       ? summaryRows.reduce((a, r) => a + r.credits_used, 0)
@@ -560,63 +799,7 @@ export function CostManagementPage() {
             {tab === "Consumption" ? (
               <>
                 <DateRangePicker value={dateRange} onChange={setDateRange} />
-                {activeConn ? (
-                  <span className="account-chip">
-                    <select
-                      className="account-chip-select"
-                      value={String(connectionId)}
-                      onChange={(e) => {
-                        const id = Number(e.target.value);
-                        setConnectionId(id);
-                        setActiveConnectionId(id);
-                        setOrgAccountFilter(ALL_ACCOUNTS);
-                      }}
-                      aria-label="Connection"
-                    >
-                      {connections.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className="account-chip-clear"
-                      title="Limpar conta ativa"
-                      aria-label="Limpar conta ativa"
-                      onClick={() => {
-                        setActiveConnectionId(null);
-                        setConnectionId("");
-                        setOrgAccountFilter(ALL_ACCOUNTS);
-                      }}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ) : null}
-                <span
-                  className="account-chip account-chip-all"
-                  title={orgAccountsNote || undefined}
-                >
-                  <select
-                    className="account-chip-select"
-                    value={orgAccountFilter}
-                    onChange={(e) => setOrgAccountFilter(e.target.value)}
-                    aria-label="All Accounts"
-                  >
-                    <option value={ALL_ACCOUNTS}>All Accounts</option>
-                    {(orgAccounts.length
-                      ? orgAccounts
-                      : activeConn
-                        ? [activeConn.name]
-                        : []
-                    ).map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </span>
+                {connectionPair}
                 <FilterPill
                   label="Tags"
                   value="N/A"
@@ -650,19 +833,7 @@ export function CostManagementPage() {
               </>
             ) : (
               <>
-                <FilterPill
-                  label="Account"
-                  value={String(connectionId)}
-                  onChange={(v) => {
-                    const id = Number(v);
-                    setConnectionId(id);
-                    setActiveConnectionId(id);
-                  }}
-                  options={connections.map((c) => ({
-                    value: String(c.id),
-                    label: c.name,
-                  }))}
-                />
+                {connectionPair}
                 {showTimeNonConsumption ? (
                   <FilterPill
                     label="Time Range"
@@ -754,10 +925,8 @@ export function CostManagementPage() {
                   <strong>{overview.total_credits.toFixed(1)}</strong>
                 </div>
                 <div className="metric">
-                  <span className="muted">Storage (TB approx)</span>
-                  <strong>
-                    {overview.storage_tb != null ? overview.storage_tb.toFixed(3) : "—"}
-                  </strong>
+                  <span className="muted">Storage (approx)</span>
+                  <strong>{formatStorage(overview)}</strong>
                 </div>
               </div>
               {overview.storage_note ? (
@@ -885,14 +1054,17 @@ export function CostManagementPage() {
           {tab === "Organization Overview" && org ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               {org.note ? <div className="info-box">{org.note}</div> : null}
-              {org.items.length ? (
+              {org.items.length && !orgItems.length ? (
+                <div className="info-box">Nenhum consumo desta conta no período.</div>
+              ) : null}
+              {orgItems.length ? (
                 <div className="table cost-table cost-table-org">
                   <div className="table-head">
                     <span>DATE</span>
                     <span>ACCOUNT</span>
                     <span>CREDITS</span>
                   </div>
-                  {org.items.map((r, i) => (
+                  {orgItems.map((r, i) => (
                     <div key={`${r.usage_date}-${r.account_name}-${i}`} className="table-row">
                       <span>{r.usage_date}</span>
                       <span>{r.account_name}</span>

@@ -31,6 +31,6 @@ def get_settings() -> dict:
         "oauth_client_id": os.getenv("OAUTH_CLIENT_ID", "").strip(),
         "oauth_client_secret": os.getenv("OAUTH_CLIENT_SECRET", "").strip(),
         "portal_public_url": os.getenv("PORTAL_PUBLIC_URL", "http://localhost:8501"),
-        # Folder that mirrors connection_tokens as JSON files (empty = disabled).
+        # Folder with the user's own token/key files, read-only for the portal (empty = none).
         "tokens_export_dir": os.getenv("TOKENS_EXPORT_DIR", "").strip(),
     }

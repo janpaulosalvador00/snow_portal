@@ -33,6 +33,8 @@ SECRET_METHODS = ("pat", "password", "keypair", "oauth", "local_oauth")
 TOKEN_TYPES = ("oauth_access", "oauth_refresh", "pat", "password", "private_key")
 TOKEN_STATUSES = ("active", "expired", "revoked")
 TOKEN_SOURCES = ("oauth", "typed", "upload", "folder", "saved_token")
+# Who set connection_tokens.expires_at: the provider (OAuth expires_in) or a user (manual).
+EXPIRY_SOURCES = ("provider", "manual")
 _SQL_TOKEN_TYPES = ", ".join(f"'{t}'" for t in TOKEN_TYPES)
 _SQL_AUTH_METHODS = ", ".join(f"'{m}'" for m in AUTH_METHODS)
 
@@ -55,6 +57,7 @@ CREATE TABLE IF NOT EXISTS connection_tokens (
                         CHECK (status IN ('active', 'expired', 'revoked')),
     issued_at           TIMESTAMPTZ,
     expires_at          TIMESTAMPTZ,
+    expires_at_source   VARCHAR(16),
     last_refreshed_at   TIMESTAMPTZ,
     revoked_at          TIMESTAMPTZ,
     file_name           VARCHAR(300),
@@ -73,7 +76,7 @@ SELECT id, connection_id, connection_name, account_identifier, username, role_na
        CASE WHEN status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()
             THEN 'expired' ELSE status END AS status,
        fingerprint, issued_at, expires_at, last_refreshed_at, revoked_at,
-       file_name, created_at, updated_at, source, source_file
+       file_name, created_at, updated_at, source, source_file, expires_at_source
 FROM connection_tokens
 """
 
@@ -240,6 +243,16 @@ def ensure_schema() -> None:
         cur.execute("ALTER TABLE connection_tokens ADD COLUMN IF NOT EXISTS source VARCHAR(16)")
         cur.execute(
             "ALTER TABLE connection_tokens ADD COLUMN IF NOT EXISTS source_file VARCHAR(300)"
+        )
+        cur.execute(
+            "ALTER TABLE connection_tokens ADD COLUMN IF NOT EXISTS expires_at_source VARCHAR(16)"
+        )
+        # Rows written before the column existed: any stored expiry came from the provider.
+        cur.execute(
+            """
+            UPDATE connection_tokens SET expires_at_source = 'provider'
+            WHERE expires_at IS NOT NULL AND expires_at_source IS NULL
+            """
         )
         cur.execute(
             "ALTER TABLE connection_tokens DROP CONSTRAINT IF EXISTS connection_tokens_token_type_check"
@@ -862,6 +875,7 @@ def sync_connection_tokens(
                 encrypted = prev["token_encrypted"]
                 issued_at = prev["issued_at"]
                 expires_at = prev["expires_at"]
+                expires_at_source = prev.get("expires_at_source")
                 last_refreshed_at = prev["last_refreshed_at"]
             else:
                 encrypted = encrypt_secret(tok["value"])
@@ -872,6 +886,7 @@ def sync_connection_tokens(
                         expires_at = issued_at + timedelta(seconds=int(tok["expires_in"]))
                     except (TypeError, ValueError):
                         expires_at = None
+                expires_at_source = "provider" if expires_at is not None else None
                 last_refreshed_at = (
                     now if refreshed else (prev["last_refreshed_at"] if prev else None)
                 )
@@ -896,9 +911,9 @@ def sync_connection_tokens(
                     connection_id, connection_name, account_identifier, username,
                     role_name, auth_method, token_type, token_encrypted, fingerprint,
                     status, issued_at, expires_at, last_refreshed_at, revoked_at, file_name,
-                    source, source_file
+                    source, source_file, expires_at_source
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s)
                 ON CONFLICT (connection_id, token_type) DO UPDATE
                 SET connection_name = EXCLUDED.connection_name,
                     account_identifier = EXCLUDED.account_identifier,
@@ -915,6 +930,7 @@ def sync_connection_tokens(
                     file_name = EXCLUDED.file_name,
                     source = EXCLUDED.source,
                     source_file = EXCLUDED.source_file,
+                    expires_at_source = EXCLUDED.expires_at_source,
                     updated_at = NOW()
                 WHERE (
                     connection_tokens.connection_name, connection_tokens.account_identifier,
@@ -923,7 +939,8 @@ def sync_connection_tokens(
                     connection_tokens.status, connection_tokens.issued_at,
                     connection_tokens.expires_at, connection_tokens.last_refreshed_at,
                     connection_tokens.revoked_at, connection_tokens.file_name,
-                    connection_tokens.source, connection_tokens.source_file
+                    connection_tokens.source, connection_tokens.source_file,
+                    connection_tokens.expires_at_source
                 ) IS DISTINCT FROM (
                     EXCLUDED.connection_name, EXCLUDED.account_identifier,
                     EXCLUDED.username, EXCLUDED.role_name,
@@ -931,7 +948,8 @@ def sync_connection_tokens(
                     EXCLUDED.status, EXCLUDED.issued_at,
                     EXCLUDED.expires_at, EXCLUDED.last_refreshed_at,
                     NULL::timestamptz, EXCLUDED.file_name,
-                    EXCLUDED.source, EXCLUDED.source_file
+                    EXCLUDED.source, EXCLUDED.source_file,
+                    EXCLUDED.expires_at_source
                 )
                 """,
                 (
@@ -951,6 +969,7 @@ def sync_connection_tokens(
                     fname,
                     origin,
                     origin_file,
+                    expires_at_source,
                 ),
             )
         stale = [t for t in existing if t not in {tok["token_type"] for tok in tokens}]
@@ -1045,6 +1064,78 @@ def get_saved_token_secret(user: dict, token_id: int, *, token_type: str) -> tup
         raise ValueError("Token salvo expirado. Escolha outro ou selecione um arquivo novo.")
     secret = decrypt_secret(row.pop("token_encrypted"))
     return dict(row), secret
+
+
+def get_token_row(token_id: int) -> dict | None:
+    """connection_tokens row (live status from the view), without the ciphertext."""
+    with db_cursor() as cur:
+        cur.execute("SELECT * FROM v_connection_tokens WHERE id = %s", (token_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def set_token_expiry(token_id: int, expires_at: datetime | None) -> dict | None:
+    """Set (manual) or clear a token's expiry; recomputes status and rewrites its file."""
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE connection_tokens
+            SET expires_at = %(exp)s,
+                expires_at_source = CASE WHEN %(exp)s::timestamptz IS NULL THEN NULL
+                                         ELSE 'manual' END,
+                status = CASE WHEN %(exp)s::timestamptz IS NOT NULL AND %(exp)s <= NOW()
+                              THEN 'expired' ELSE 'active' END,
+                updated_at = NOW()
+            WHERE id = %(id)s AND status <> 'revoked'
+            RETURNING *
+            """,
+            {"exp": expires_at, "id": token_id},
+        )
+        row = cur.fetchone()
+    if row and row.get("file_name"):
+        token_export.write_token_file(dict(row))
+    return dict(row) if row else None
+
+
+def clear_connection_secret(connection_id: int) -> int:
+    """Erase a connection's stored credential; its token rows end up revoked.
+
+    The connection itself (name, ACL, warehouse, cache) is kept so it can be
+    re-authenticated later. Returns how many token rows were revoked.
+    """
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            "UPDATE connections SET pat_encrypted = NULL, updated_at = NOW() WHERE id = %s",
+            (connection_id,),
+        )
+        revoked = _revoke_tokens(cur, connection_id)
+    token_export.remove_token_files(connection_id)
+    return revoked
+
+
+def revoke_token_row(token_id: int) -> int:
+    """Revoke a single row (orphans whose connection no longer exists)."""
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE connection_tokens
+            SET status = 'revoked', token_encrypted = NULL, file_name = NULL,
+                revoked_at = NOW(), updated_at = NOW()
+            WHERE id = %s AND status <> 'revoked'
+            RETURNING connection_id
+            """,
+            (token_id,),
+        )
+        hit = cur.fetchone()
+    return 1 if hit else 0
+
+
+def delete_revoked_token(token_id: int) -> bool:
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            "DELETE FROM connection_tokens WHERE id = %s AND status = 'revoked'", (token_id,)
+        )
+        return cur.rowcount > 0
 
 
 def backfill_connection_tokens() -> dict:

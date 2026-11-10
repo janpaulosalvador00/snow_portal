@@ -39,10 +39,10 @@ def _fetch_consumption(creds: dict, params: dict) -> dict:
 
 
 def _fetch_org_accounts(creds: dict, params: dict) -> dict:
-    fallback = creds.get("account") or creds.get("account_identifier") or None
+    fallback = cost_queries.account_name_from_identifier(creds.get("account"))
     return cost_queries.list_org_accounts(
         creds,
-        fallback_name=str(fallback) if fallback else None,
+        fallback_name=fallback,
         **_window(params),
     )
 
@@ -59,6 +59,7 @@ def _fetch_org_consumption(creds: dict, params: dict) -> dict:
 
 DATASETS: dict[str, Fetcher] = {
     "options": lambda creds, _p: discover_session_options_with_creds(creds),
+    "connection_account": lambda creds, _p: cost_queries.connection_account(creds),
     "consumption": _fetch_consumption,
     "org_accounts": _fetch_org_accounts,
     "org_consumption": _fetch_org_consumption,
@@ -137,6 +138,36 @@ def _with_meta(payload: dict, fetched_at: datetime, cached: bool) -> dict:
     return {**payload, "cached": cached, "fetched_at": fetched_at.isoformat()}
 
 
+# Metering for the last days keeps landing for hours (ACCOUNT_USAGE ~3h, ORGANIZATION_USAGE
+# up to ~24h), so windows touching them must not be frozen at the first fetch.
+_WINDOWED_DATASETS = {
+    "consumption",
+    "org_consumption",
+    "account_overview",
+    "anomalies",
+    "organization_overview",
+}
+_LIVE_WINDOW_DAYS = 2
+_LIVE_TTL = timedelta(hours=1)
+
+
+def _is_stale(dataset: str, params: dict, fetched_at: datetime) -> bool:
+    if dataset not in _WINDOWED_DATASETS:
+        return False
+    now = datetime.now(timezone.utc)
+    end = params.get("end_date")
+    if end:
+        try:
+            end_d = date.fromisoformat(str(end)[:10])
+        except ValueError:
+            return False
+        if end_d < now.date() - timedelta(days=_LIVE_WINDOW_DAYS):
+            return False
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    return now - fetched_at > _LIVE_TTL
+
+
 def cached_fetch(
     connection_id: int,
     dataset: str,
@@ -148,14 +179,21 @@ def cached_fetch(
     """Serve from Postgres unless missing or forced; then query Snowflake and store."""
     params = params or {}
     key = params_key(params)
+    hit = None
     if not force:
         hit = db.get_cache(connection_id, dataset, key)
-        if hit is not None:
+        if hit is not None and not _is_stale(dataset, params, hit["fetched_at"]):
             return _with_meta(hit["payload"], hit["fetched_at"], True)
 
     if creds is None:
         creds = db.get_connection_credentials(connection_id)
-    payload = _sanitize(jsonable_encoder(DATASETS[dataset](creds, params)))
+    try:
+        payload = _sanitize(jsonable_encoder(DATASETS[dataset](creds, params)))
+    except Exception:
+        if hit is None:
+            raise
+        logger.warning("refetch %s %s failed; serving stale cache", connection_id, dataset)
+        return _with_meta(hit["payload"], hit["fetched_at"], True)
     fetched_at = db.upsert_cache(connection_id, dataset, key, json.dumps(payload))
     return _with_meta(payload, fetched_at, False)
 
@@ -175,6 +213,7 @@ def default_jobs(today: date | None = None) -> list[tuple[str, dict]]:
     win7 = window_params(7, start7, end)
     return [
         ("options", {}),
+        ("connection_account", {}),
         ("resource_monitors", {}),
         ("budgets", {}),
         ("service_types", {}),

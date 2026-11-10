@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS connection_tokens (
                         CHECK (status IN ('active', 'expired', 'revoked')),
     issued_at           TIMESTAMPTZ,
     expires_at          TIMESTAMPTZ,
+    -- who set expires_at: provider (OAuth expires_in) | manual (user, never overwritten by sync)
+    expires_at_source   VARCHAR(16),
     last_refreshed_at   TIMESTAMPTZ,
     revoked_at          TIMESTAMPTZ,
     file_name           VARCHAR(300),
@@ -122,7 +124,7 @@ SELECT id, connection_id, connection_name, account_identifier, username, role_na
        CASE WHEN status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()
             THEN 'expired' ELSE status END AS status,
        fingerprint, issued_at, expires_at, last_refreshed_at, revoked_at,
-       file_name, created_at, updated_at, source, source_file
+       file_name, created_at, updated_at, source, source_file, expires_at_source
 FROM connection_tokens;
 
 CREATE INDEX IF NOT EXISTS idx_oauth_pending_created ON oauth_pending(created_at);

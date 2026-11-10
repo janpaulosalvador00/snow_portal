@@ -17,7 +17,16 @@ _SNIFF_BYTES = 512
 
 
 def folder_label() -> str:
-    return (os.getenv("TOKENS_HOST_DIR") or "").strip() or str(token_export.export_dir() or "")
+    return (os.getenv("TOKENS_HOST_DIR") or "").strip() or str(token_export.tokens_dir() or "")
+
+
+def _is_secret_file_name(name: str) -> bool:
+    lower = name.lower()
+    return (
+        not name.startswith(".")
+        and not lower.endswith(".json")
+        and lower.endswith(SECRET_FILE_EXTENSIONS)
+    )
 
 
 def _sniff(head: str) -> tuple[str | None, bool]:
@@ -35,7 +44,7 @@ def _sniff(head: str) -> tuple[str | None, bool]:
 
 def list_folder_files(kind: str | None = None) -> dict:
     """Secret-like files in TOKENS_EXPORT_DIR (name, size, mtime, kind; never content)."""
-    folder = token_export.export_dir()
+    folder = token_export.tokens_dir()
     if folder is None:
         return {"available": False, "folder": "", "files": []}
     files: list[dict] = []
@@ -45,7 +54,7 @@ def list_folder_files(kind: str | None = None) -> dict:
         return {"available": False, "folder": folder_label(), "files": []}
     for entry in entries:
         name = entry.name
-        if name.startswith(".") or not name.lower().endswith(SECRET_FILE_EXTENSIONS):
+        if not _is_secret_file_name(name):
             continue
         try:
             if not entry.is_file():
@@ -72,7 +81,7 @@ def list_folder_files(kind: str | None = None) -> dict:
 
 
 def read_folder_file(name: str) -> str:
-    folder = token_export.export_dir()
+    folder = token_export.tokens_dir()
     if folder is None:
         raise ValueError("Pasta de tokens não configurada (TOKENS_EXPORT_DIR).")
     raw = (name or "").strip()
@@ -81,8 +90,7 @@ def read_folder_file(name: str) -> str:
         or raw != PurePath(raw).name
         or "/" in raw
         or "\\" in raw
-        or raw.startswith(".")
-        or not raw.lower().endswith(SECRET_FILE_EXTENSIONS)
+        or not _is_secret_file_name(raw)
     ):
         raise ValueError("Nome de arquivo inválido.")
     base = folder.resolve()

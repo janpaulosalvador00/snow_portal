@@ -999,6 +999,115 @@ select:focus {
   outline: none;
 }
 
+.fp-trigger {
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding-right: 0.6rem;
+}
+
+.fp-trigger:hover:not(:disabled),
+.fp-trigger.is-open {
+  border-color: #3a414b;
+}
+
+.fp-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.fp-trigger:disabled {
+  cursor: not-allowed;
+}
+
+.fp-value {
+  max-width: 140px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fp-chevron {
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.fp-menu {
+  position: fixed;
+  z-index: 1000;
+  margin: 0;
+  list-style: none;
+  max-width: calc(100vw - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #1a1d21;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.35rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  scrollbar-width: thin;
+  scrollbar-color: #3a414b transparent;
+}
+
+.fp-menu:focus {
+  outline: none;
+}
+
+.fp-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+  font-size: 0.86rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.fp-option.active {
+  background: #242830;
+}
+
+.fp-option.selected {
+  background: #1f6feb;
+  color: #fff;
+}
+
+.fp-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fp-consumed-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(41, 181, 232, 0.18);
+}
+
+.fp-option.selected .fp-consumed-dot {
+  background: #fff;
+  box-shadow: none;
+}
+
+.fp-check {
+  margin-left: auto;
+  padding-left: 0.75rem;
+  font-size: 0.85rem;
+  min-width: 1.6rem;
+  text-align: right;
+}
+
 .filter-search {
   min-width: 180px;
 }
@@ -1729,6 +1838,21 @@ select:focus {
 
 .account-chip-all .account-chip-select {
   max-width: 220px;
+}
+
+.account-chip-select:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.account-chip.is-unresolved {
+  border-color: #9e6a03;
+  background: rgba(210, 153, 34, 0.12);
+}
+
+.account-chip.is-unresolved .account-chip-select {
+  color: var(--text-muted, #8b939e);
+  font-style: italic;
 }
 
 .cost-filter-divider {

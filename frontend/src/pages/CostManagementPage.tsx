@@ -32,12 +32,26 @@ type Conn = {
   role_name?: string | null;
 };
 
+type StackBy = "service" | "resource" | "account";
+
 type Consumption = {
   total_credits: number;
   summary: { name: string; type: string; tags: string; credits_used: number }[];
   chart: { period_start: string; resource_name: string; credits: number }[];
   available?: boolean;
+  stack_by?: StackBy;
   note?: string | null;
+};
+
+type ServiceTypesResp = {
+  items: { value: string; label: string; consumed: boolean }[];
+  note: string | null;
+};
+
+const STACK_LABELS: Record<StackBy, { view: string; header: string }> = {
+  service: { view: "View by Service", header: "SERVICE" },
+  resource: { view: "View by Resource", header: "NAME" },
+  account: { view: "View by Account", header: "ACCOUNT" },
 };
 
 type OrgAccountsResp = {
@@ -108,16 +122,13 @@ type OrgResp = {
   note: string | null;
 };
 
-const SERVICE_OPTIONS = [
+const DEFAULT_SERVICE_TYPE = "WAREHOUSE_METERING";
+const DEFAULT_SERVICE_OPTIONS = [
   { value: "All", label: "All" },
-  { value: "WAREHOUSE_METERING", label: "Warehouse" },
-  { value: "AI_SERVICES", label: "AI Services" },
-  { value: "AI_INFERENCE", label: "AI Inference" },
-  { value: "SNOWPARK_CONTAINER_SERVICES", label: "Snowpark Container" },
-  { value: "AUTO_CLUSTERING", label: "Auto Clustering" },
-  { value: "PIPE", label: "Snowpipe" },
-  { value: "SERVERLESS_TASK", label: "Serverless Task" },
+  { value: DEFAULT_SERVICE_TYPE, label: "Warehouse" },
 ];
+/** Suffix on Service Type options that consumed credits (native select cannot style rows). */
+const CONSUMED_MARK = " •";
 
 export function CostManagementPage() {
   const [connections, setConnections] = useState<Conn[]>([]);
@@ -125,14 +136,15 @@ export function CostManagementPage() {
   const [dateRange, setDateRange] = useState<DateRangeValue>({ mode: "preset", days: 7 });
   const [usageType, setUsageType] = useState("Compute");
   const [grain, setGrain] = useState("day");
-  const [serviceType, setServiceType] = useState("WAREHOUSE_METERING");
+  const [serviceType, setServiceType] = useState(DEFAULT_SERVICE_TYPE);
+  const [serviceOptions, setServiceOptions] = useState(DEFAULT_SERVICE_OPTIONS);
   const [resourceFilter, setResourceFilter] = useState("All");
   /** Snowflake-style All Accounts filter (`__all__` or ACCOUNT_NAME). */
   const [orgAccountFilter, setOrgAccountFilter] = useState(ALL_ACCOUNTS);
   const [orgAccounts, setOrgAccounts] = useState<string[]>([]);
   const [orgAccountsNote, setOrgAccountsNote] = useState<string | null>(null);
-  /** Consumption chart/table stacked by Account vs Warehouse resource. */
-  const [consumptionByAccount, setConsumptionByAccount] = useState(false);
+  /** Dimension the Consumption chart/table series represent (from the API `stack_by`). */
+  const [stackBy, setStackBy] = useState<StackBy>("service");
   const [data, setData] = useState<Consumption | null>(null);
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [anom, setAnom] = useState<AnomaliesResp | null>(null);
@@ -214,6 +226,31 @@ export function CostManagementPage() {
     };
   }, [connectionId]);
 
+  // Full Service Type catalog (cached server-side); consumed services get a marker.
+  useEffect(() => {
+    if (!connectionId) {
+      setServiceOptions(DEFAULT_SERVICE_OPTIONS);
+      return;
+    }
+    let cancelled = false;
+    void api<ServiceTypesResp>(`/api/cost/service-types?connection_id=${Number(connectionId)}`)
+      .then((res) => {
+        if (cancelled || !res.items?.length) return;
+        setServiceOptions(
+          res.items.map((o) => ({
+            value: o.value,
+            label: o.consumed && o.value !== "All" ? `${o.label}${CONSUMED_MARK}` : o.label,
+          })),
+        );
+      })
+      .catch(() => {
+        /* keep prior options; cost load surfaces auth/network errors */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionId, refreshToken]);
+
   async function load() {
     if (!connectionId) {
       loadAbortRef.current?.abort();
@@ -227,7 +264,7 @@ export function CostManagementPage() {
       setOrg(null);
       setOrgAccounts([]);
       setOrgAccountsNote(null);
-      setConsumptionByAccount(false);
+      setStackBy("service");
       setLoading(false);
       return;
     }
@@ -312,16 +349,16 @@ export function CostManagementPage() {
             const wh = await api<Consumption>(`/api/cost/consumption?${qs}`, { signal });
             if (signal.aborted) return;
             setData(wh);
-            setConsumptionByAccount(false);
+            setStackBy(wh.stack_by ?? "resource");
           } else {
             setData(res);
-            setConsumptionByAccount(true);
+            setStackBy(res.stack_by ?? "account");
           }
         } else {
           const res = await api<Consumption>(`/api/cost/consumption?${qs}`, { signal });
           if (signal.aborted) return;
           setData(res);
-          setConsumptionByAccount(false);
+          setStackBy(res.stack_by ?? "resource");
         }
       } else if (tab === "Account Overview") {
         const res = await api<AccountOverview>(`/api/cost/account-overview?${qs}`, {
@@ -362,7 +399,7 @@ export function CostManagementPage() {
       setBudgets(null);
       setOrg(null);
       setOrgAccounts([]);
-      setConsumptionByAccount(false);
+      setStackBy("service");
       setErr(e instanceof ApiError ? e.message : "Falha ao carregar Cost Management.");
     } finally {
       // Only the latest in-flight request may clear the spinner (aborts leave loading on).
@@ -578,7 +615,7 @@ export function CostManagementPage() {
                   label="Service Type"
                   value={serviceType}
                   onChange={setServiceType}
-                  options={SERVICE_OPTIONS}
+                  options={serviceOptions}
                 />
                 <FilterPill
                   label="Resources"
@@ -657,7 +694,7 @@ export function CostManagementPage() {
 
           {tab === "Consumption" && data ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
-              {orgAccountsNote && !consumptionByAccount ? (
+              {orgAccountsNote && stackBy === "resource" ? (
                 <div className="info-box">{orgAccountsNote}</div>
               ) : null}
               {chartData?.rows.length ? (
@@ -666,17 +703,15 @@ export function CostManagementPage() {
                   resources={chartData.resources}
                   grain={grain}
                   onGrain={setGrain}
-                  viewByLabel={
-                    consumptionByAccount ? "View by Account" : "View by Resource"
-                  }
+                  viewByLabel={STACK_LABELS[stackBy].view}
                 />
               ) : (
                 <div className="info-box">Nenhum consumo no período.</div>
               )}
               <CreditsTable
                 rows={summaryRows}
-                nameHeader={consumptionByAccount ? "ACCOUNT" : "NAME"}
-                typeHeader={consumptionByAccount ? "TYPE" : "TYPE"}
+                nameHeader={STACK_LABELS[stackBy].header}
+                typeHeader="TYPE"
               />
             </div>
           ) : null}

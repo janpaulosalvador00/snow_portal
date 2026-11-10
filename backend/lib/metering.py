@@ -5,22 +5,33 @@ import pandas as pd
 
 from backend.lib.snowflake_client import run_query
 
-# Friendly labels for common SERVICE_TYPE values
+# Friendly labels for every documented SERVICE_TYPE value (full Service Type catalog)
 SERVICE_TYPE_LABELS = {
     "WAREHOUSE_METERING": "Warehouse",
+    "WAREHOUSE_METERING_READER": "Warehouse (Reader)",
     "CLOUD_SERVICES_ONLY": "Cloud Services",
     "AI_SERVICES": "AI Services",
     "AI_INFERENCE": "AI Inference",
+    "AI_FUNCTIONS": "AI Functions",
+    "CORTEX_ANALYST": "Cortex Analyst",
     "SNOWPARK_CONTAINER_SERVICES": "Snowpark Container Services",
     "COMPUTE_POOL": "Compute Pool",
     "AUTO_CLUSTERING": "Automatic Clustering",
     "MATERIALIZED_VIEW": "Materialized Views",
-    "PIPE": "Snowpipe",
-    "QUERY_ACCELERATION": "Query Acceleration",
-    "REPLICATION": "Replication",
     "SEARCH_OPTIMIZATION": "Search Optimization",
+    "QUERY_ACCELERATION": "Query Acceleration",
+    "PIPE": "Snowpipe",
+    "SNOWPIPE_STREAMING": "Snowpipe Streaming",
+    "COPY_FILES": "Copy Files",
     "SERVERLESS_TASK": "Serverless Tasks",
-    "CORTEX_ANALYST": "Cortex Analyst",
+    "SERVERLESS_TASK_FLEX": "Serverless Tasks (Flex)",
+    "SERVERLESS_ALERTS": "Serverless Alerts",
+    "REPLICATION": "Replication",
+    "HYBRID_TABLE_REQUESTS": "Hybrid Table Requests",
+    "DATA_QUALITY_MONITORING": "Data Quality Monitoring",
+    "SENSITIVE_DATA_CLASSIFICATION": "Sensitive Data Classification",
+    "TRUST_CENTER": "Trust Center",
+    "ONLINE_FEATURE_TABLE": "Online Feature Table",
 }
 
 

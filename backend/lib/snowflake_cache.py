@@ -49,7 +49,11 @@ def _fetch_org_accounts(creds: dict, params: dict) -> dict:
 
 def _fetch_org_consumption(creds: dict, params: dict) -> dict:
     return cost_queries.org_consumption_by_account(
-        creds, account_name=params.get("account_name"), **_window(params)
+        creds,
+        account_name=params.get("account_name"),
+        service_type=params.get("service_type"),
+        usage_type=params.get("usage_type", "Compute"),
+        **_window(params),
     )
 
 
@@ -58,6 +62,7 @@ DATASETS: dict[str, Fetcher] = {
     "consumption": _fetch_consumption,
     "org_accounts": _fetch_org_accounts,
     "org_consumption": _fetch_org_consumption,
+    "service_types": lambda creds, _p: cost_queries.service_types(creds),
     "account_overview": lambda creds, p: cost_queries.account_overview(creds, **_window(p)),
     "anomalies": lambda creds, p: cost_queries.anomalies(creds, **_window(p)),
     "organization_overview": lambda creds, p: cost_queries.organization_overview(
@@ -97,12 +102,23 @@ def consumption_params(
 
 
 def org_consumption_params(
-    *, days: int, start_date: str | None, end_date: str | None, account_name: str | None
+    *,
+    days: int,
+    start_date: str | None,
+    end_date: str | None,
+    account_name: str | None,
+    service_type: str | None = None,
+    usage_type: str = "Compute",
 ) -> dict:
     name = (account_name or "").strip()
+    service = (service_type or "").strip()
     return {
         **window_params(days, start_date, end_date),
         "account_name": None if not name or name == "All" else name,
+        "service_type": None if not service or service == "All" else service,
+        "usage_type": (
+            usage_type if usage_type in ("All", "Compute", "Cloud Services") else "Compute"
+        ),
     }
 
 
@@ -161,11 +177,19 @@ def default_jobs(today: date | None = None) -> list[tuple[str, dict]]:
         ("options", {}),
         ("resource_monitors", {}),
         ("budgets", {}),
+        ("service_types", {}),
         ("org_accounts", window_params(28, None, None)),
         ("org_accounts", win7),
         (
             "org_consumption",
-            org_consumption_params(days=7, start_date=start7, end_date=end, account_name=None),
+            org_consumption_params(
+                days=7,
+                start_date=start7,
+                end_date=end,
+                account_name=None,
+                service_type="WAREHOUSE_METERING",
+                usage_type="Compute",
+            ),
         ),
         (
             "consumption",

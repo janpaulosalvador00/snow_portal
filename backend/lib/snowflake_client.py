@@ -1,12 +1,49 @@
-"""Snowflake connector helpers (PAT, password, OAuth browser, SSO)."""
+"""Snowflake connector helpers (PAT, password, key pair, OAuth browser, SSO)."""
 from __future__ import annotations
 
 import json
+import logging
+import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Generator
 
 import pandas as pd
 import snowflake.connector
+
+from backend.lib import keypair
+
+logger = logging.getLogger(__name__)
+
+# Refresh OAuth access tokens this many seconds before they expire.
+OAUTH_REFRESH_SKEW_SEC = 60
+_oauth_refresh_locks: dict[Any, threading.Lock] = {}
+_oauth_refresh_locks_guard = threading.Lock()
+
+
+class AccountUsageAccessError(RuntimeError):
+    """SNOWFLAKE.ACCOUNT_USAGE not visible to the session role (not an auth failure)."""
+
+
+def account_usage_access_message(
+    *, auth_method: str | None, role: str | None, detail: BaseException | None = None
+) -> str:
+    """pt-BR guidance when ACCOUNT_USAGE is denied and ACCOUNTADMIN is not usable."""
+    role_label = (role or "").strip() or "<sua_role>"
+    msg = (
+        f"Sem acesso a SNOWFLAKE.ACCOUNT_USAGE com a role {role_label}. "
+        "Peça a um ACCOUNTADMIN: "
+        f"GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE {role_label}; "
+        "e use essa role na conexão (Conexões → Editar → Role)."
+    )
+    if (auth_method or "").lower() in ("oauth", "local_oauth"):
+        msg += (
+            " No OAuth do Snowflake as roles ACCOUNTADMIN, SECURITYADMIN e ORGADMIN ficam "
+            "bloqueadas por padrão, então o portal não consegue trocar para ACCOUNTADMIN."
+        )
+    elif detail is not None:
+        msg += f" (Troca para ACCOUNTADMIN falhou: {str(detail)[:200]})"
+    return msg
 
 
 def normalize_account_identifier(account: str) -> str:
@@ -29,11 +66,71 @@ def normalize_account_identifier(account: str) -> str:
     return value.strip()
 
 
-def friendly_connect_error(exc: BaseException, *, auth_method: str | None = None) -> str:
+def is_oauth_token_error(exc: BaseException) -> bool:
+    """True when Snowflake rejected the OAuth access token (invalid/expired), i.e. a refresh may help."""
+    raw = str(exc)
+    lower = raw.lower()
+    if "390303" in raw or "390318" in raw:
+        return True
+    return "oauth" in lower and ("expired" in lower or "invalid" in lower or "390114" in raw)
+
+
+def friendly_connect_error(
+    exc: BaseException,
+    *,
+    auth_method: str | None = None,
+    secret: str | None = None,
+) -> str:
     """Map known Snowflake auth failures to actionable pt-BR guidance."""
     raw = str(exc)
     lower = raw.lower()
     method = (auth_method or "").lower()
+    is_oauth = method in ("oauth", "local_oauth")
+
+    if isinstance(exc, AccountUsageAccessError):
+        return raw
+
+    if (
+        is_oauth
+        and any(r in lower for r in ("accountadmin", "securityadmin", "orgadmin"))
+        and any(
+            k in lower
+            for k in (
+                "not granted",
+                "blocked",
+                "not authorized",
+                "not allowed",
+                "invalid_scope",
+                "invalid scope",
+            )
+        )
+    ):
+        return (
+            "A role pedida está bloqueada no OAuth do Snowflake: ACCOUNTADMIN, SECURITYADMIN "
+            "e ORGADMIN não podem ser usadas via OAuth por padrão. Use outra role na conexão "
+            "e, para Cost Management, conceda: "
+            "GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE <sua_role>. "
+            f"Detalhe: {raw[:300]}"
+        )
+
+    if method == "keypair" and isinstance(exc, ValueError):
+        return raw
+
+    if method == "keypair" and ("390144" in raw or "jwt" in lower):
+        fp = keypair.public_key_fingerprint(secret) if secret else None
+        fp_note = f" A chave selecionada tem fingerprint {fp}." if fp else ""
+        return (
+            "Snowflake recusou a chave (JWT inválido, 390144): a chave pública desta chave "
+            "privada não está registrada para o usuário informado." + fp_note + " "
+            "Confira com DESC USER <usuario> (RSA_PUBLIC_KEY_FP) e, se necessário, registre: "
+            "ALTER USER <usuario> SET RSA_PUBLIC_KEY='<conteúdo do .pub sem cabeçalho>';"
+        )
+
+    if method == "pat" and ("390100" in raw or "incorrect username or password" in lower):
+        return (
+            "Snowflake recusou o PAT (390100): token inválido, expirado ou de outro usuário. "
+            "Confira se o token pertence ao usuário informado."
+        )
 
     if "resource monitor" in lower or "cannot be resumed" in lower or "090073" in raw:
         mon = None
@@ -72,6 +169,12 @@ def friendly_connect_error(exc: BaseException, *, auth_method: str | None = None
             "real (ex.: WH_CON_EXT, WH_ARQUITETO) ou deixe vazio para auto; "
             "(2) Sem acesso a ACCOUNT_USAGE — execute "
             "GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE <sua_role>."
+            + (
+                " No OAuth, ACCOUNTADMIN/SECURITYADMIN ficam bloqueadas por padrão: "
+                "o GRANT precisa ser na role usada pela conexão."
+                if is_oauth
+                else ""
+            )
         )
 
     if "390190" in raw or "saml identity provider" in lower:
@@ -86,7 +189,7 @@ def friendly_connect_error(exc: BaseException, *, auth_method: str | None = None
             "SSO/SAML exige IdP na conta. Prefira Conectar via browser (OAuth) ou PAT."
         )
 
-    if "oauth" in lower and ("expired" in lower or "invalid" in lower or "390114" in raw):
+    if is_oauth_token_error(exc):
         return (
             "Token OAuth inválido ou expirado. Use Inativar/Ativar após "
             "Conectar via browser de novo, ou Editar e reautenticar."
@@ -140,6 +243,9 @@ def _connect_kwargs(
     elif method in ("oauth", "local_oauth"):
         kwargs["authenticator"] = "oauth"
         kwargs["token"] = _oauth_access_token(password)
+    elif method == "keypair":
+        kwargs["authenticator"] = "SNOWFLAKE_JWT"
+        kwargs["private_key"] = keypair.private_key_der(password or "")
     elif method == "sso":
         auth = (authenticator_url or "").strip() or "externalbrowser"
         kwargs["authenticator"] = auth
@@ -224,13 +330,21 @@ def test_connection(
                     "GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE). "
                     f"({au_exc})"
                 )
+                if (auth_method or "").lower() in ("oauth", "local_oauth"):
+                    au_note = (
+                        " ACCOUNT_USAGE=sem acesso. "
+                        + account_usage_access_message(
+                            auth_method=auth_method, role=current_role
+                        )
+                        + f" ({au_exc})"
+                    )
             return (
                 True,
                 f"OK — conta={account_name}, user={current_user}, "
                 f"role={current_role}, wh={current_wh or '—'}.{au_note}",
             )
     except Exception as exc:  # noqa: BLE001 — surface to UI
-        return False, friendly_connect_error(exc, auth_method=auth_method)
+        return False, friendly_connect_error(exc, auth_method=auth_method, secret=password)
 
 
 def _quote_ident(name: str) -> str:
@@ -474,8 +588,20 @@ def run_query(
             cur = conn.cursor()
             try:
                 cur.execute(f"USE ROLE {_quote_ident('ACCOUNTADMIN')}")
-            except Exception:  # noqa: BLE001
-                raise first from None
+            except Exception as role_exc:  # noqa: BLE001 — blocked under OAuth by default
+                if "account_usage" not in f"{sql} {first}".lower():
+                    raise first from None
+                session_role = preferred_role
+                try:
+                    cur.execute("SELECT CURRENT_ROLE()")
+                    session_role = (cur.fetchone() or [None])[0] or preferred_role
+                except Exception:  # noqa: BLE001
+                    pass
+                raise AccountUsageAccessError(
+                    account_usage_access_message(
+                        auth_method=auth_method, role=session_role, detail=role_exc
+                    )
+                ) from first
             return _run_with_warehouses(conn)
 
 
@@ -654,14 +780,17 @@ def discover_session_options_with_creds(creds: dict) -> dict[str, Any]:
             role=c.get("role"),
         )
 
+    creds = ensure_fresh_oauth_credentials(creds, connection_id=connection_id)
     try:
         return _run(creds)
     except Exception as first:  # noqa: BLE001
         method = (creds.get("auth_method") or "").lower()
         if method not in ("oauth", "local_oauth"):
-            raise RuntimeError(friendly_connect_error(first, auth_method=method)) from first
+            raise RuntimeError(
+                friendly_connect_error(first, auth_method=method, secret=creds.get("password"))
+            ) from first
         try:
-            creds = refresh_oauth_credentials(creds, connection_id=connection_id)
+            creds = _refresh_oauth_locked(creds, connection_id=connection_id)
         except Exception as refresh_exc:  # noqa: BLE001
             raise RuntimeError(
                 friendly_connect_error(first, auth_method=method)
@@ -691,12 +820,19 @@ def refresh_oauth_credentials(creds: dict, *, connection_id: int | None = None) 
     tokens = oauth_local.refresh_access_token(
         account=creds["account"],
         refresh_token=refresh,
+        client_id=blob.get("client_id"),
     )
     # Keep previous refresh_token if response omits it
     if not tokens.get("refresh_token"):
         tokens["refresh_token"] = refresh
+    if tokens["refresh_token"] == refresh and not tokens.get("refresh_token_expires_in"):
+        # Same refresh token: keep its original lifetime instead of restarting the clock
+        tokens["refresh_token_expires_in"] = blob.get("refresh_token_expires_in")
+        tokens["refresh_token_expires_at"] = blob.get("refresh_token_expires_at")
     if not tokens.get("username"):
         tokens["username"] = blob.get("username") or creds.get("user")
+    if not tokens.get("client_id"):
+        tokens["client_id"] = blob.get("client_id")
     packed = oauth_local.pack_oauth_secret(tokens)
     if connection_id is not None:
         db.update_connection_secret(connection_id, packed)
@@ -704,13 +840,109 @@ def refresh_oauth_credentials(creds: dict, *, connection_id: int | None = None) 
     return creds
 
 
+def _oauth_seconds_left(creds: dict) -> float | None:
+    """Seconds until the OAuth access token expires (None = unknown)."""
+    secret = (creds.get("password") or "").strip()
+    if not secret.startswith("{"):
+        return None
+    try:
+        blob = json.loads(secret)
+    except ValueError:
+        return None
+    expires_at = blob.get("expires_at")
+    if expires_at is None:
+        # Blobs saved before expires_at existed: the secret was written at row.updated_at
+        row = creds.get("row")
+        updated_at = row.get("updated_at") if isinstance(row, dict) else None
+        if not blob.get("expires_in") or not hasattr(updated_at, "timestamp"):
+            return None
+        try:
+            expires_at = updated_at.timestamp() + int(blob["expires_in"])
+        except (TypeError, ValueError):
+            return None
+    try:
+        return float(expires_at) - time.time()
+    except (TypeError, ValueError):
+        return None
+
+
+def _oauth_needs_refresh(creds: dict) -> bool:
+    left = _oauth_seconds_left(creds)
+    return left is not None and left <= OAUTH_REFRESH_SKEW_SEC
+
+
+def _oauth_refresh_lock(creds: dict, connection_id: int | None) -> threading.Lock:
+    key = connection_id if connection_id is not None else (creds.get("account"), creds.get("user"))
+    with _oauth_refresh_locks_guard:
+        return _oauth_refresh_locks.setdefault(key, threading.Lock())
+
+
+def _refresh_oauth_locked(
+    creds: dict, *, connection_id: int | None, reason: str = "reactive"
+) -> dict:
+    """Refresh once per connection at a time; reuse a token another thread just stored.
+
+    Updates ``creds["password"]`` in place so callers sharing the dict see the new token.
+    """
+    from backend.lib import db
+
+    stale = creds.get("password")
+    with _oauth_refresh_lock(creds, connection_id):
+        if connection_id is not None:
+            try:
+                latest = db.get_connection_credentials(connection_id)
+            except Exception:  # noqa: BLE001
+                latest = None
+            if (
+                latest
+                and latest.get("password")
+                and latest["password"] != stale
+                and not _oauth_needs_refresh(latest)
+            ):
+                creds["password"] = latest["password"]
+                logger.info(
+                    "oauth %s refresh skipped connection_id=%s: reused token stored by another request",
+                    reason,
+                    connection_id,
+                )
+                return creds
+        refreshed = refresh_oauth_credentials(creds, connection_id=connection_id)
+        creds["password"] = refreshed["password"]
+        logger.info(
+            "oauth %s refresh connection_id=%s seconds_left=%s",
+            reason,
+            connection_id,
+            _oauth_seconds_left(creds),
+        )
+        return creds
+
+
+def ensure_fresh_oauth_credentials(creds: dict, *, connection_id: int | None = None) -> dict:
+    """Refresh OAuth before connecting when the access token expires within the skew window.
+
+    Failures are only logged: the reactive refresh-on-error path still applies.
+    """
+    if (creds.get("auth_method") or "").lower() not in ("oauth", "local_oauth"):
+        return creds
+    if not _oauth_needs_refresh(creds):
+        return creds
+    try:
+        _refresh_oauth_locked(creds, connection_id=connection_id, reason="proactive")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "oauth proactive refresh failed connection_id=%s: %s", connection_id, str(exc)[:200]
+        )
+    return creds
+
+
 def run_query_with_creds(creds: dict, sql: str, params: tuple | dict | None = None) -> pd.DataFrame:
-    """Run SQL using connection credentials; auto-refresh OAuth once on auth failure."""
+    """Run SQL using connection credentials; refresh OAuth before expiry and once on failure."""
     connection_id = None
     row = creds.get("row")
     if isinstance(row, dict):
         connection_id = row.get("id")
 
+    creds = ensure_fresh_oauth_credentials(creds, connection_id=connection_id)
     try:
         return run_query(
             account=creds["account"],
@@ -725,10 +957,10 @@ def run_query_with_creds(creds: dict, sql: str, params: tuple | dict | None = No
         )
     except Exception as first:  # noqa: BLE001
         method = (creds.get("auth_method") or "").lower()
-        if method not in ("oauth", "local_oauth"):
+        if method not in ("oauth", "local_oauth") or isinstance(first, AccountUsageAccessError):
             raise
         try:
-            creds = refresh_oauth_credentials(creds, connection_id=connection_id)
+            creds = _refresh_oauth_locked(creds, connection_id=connection_id)
         except Exception as refresh_exc:  # noqa: BLE001
             raise RuntimeError(
                 friendly_connect_error(first, auth_method=method)

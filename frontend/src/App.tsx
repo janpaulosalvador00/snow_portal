@@ -9,6 +9,7 @@ import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { CostManagementPage } from "./pages/CostManagementPage";
 import { HubPage } from "./pages/HubPage";
 import { LoginPage } from "./pages/LoginPage";
+import { TokensPage } from "./pages/TokensPage";
 
 function AdminGate() {
   const { user } = useAuth();
@@ -44,6 +45,7 @@ export default function App() {
             <Route element={<AppShell />}>
               <Route path="/" element={<HubPage />} />
               <Route path="/conexoes" element={<ConnectionsPage />} />
+              <Route path="/tokens" element={<TokensPage />} />
               <Route path="/cost-management" element={<CostManagementPage />} />
               <Route path="/alerts" element={<AlertsPage />} />
               <Route path="/admin" element={<AdminGate />} />

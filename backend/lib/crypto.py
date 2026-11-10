@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -25,3 +26,9 @@ def decrypt_secret(token: str) -> str:
         return _fernet().decrypt(token.encode("utf-8")).decode("utf-8")
     except InvalidToken as exc:
         raise ValueError("Falha ao descriptografar segredo. Verifique SNOW_PORTAL_SECRET_KEY.") from exc
+
+
+def secret_fingerprint(plaintext: str) -> str:
+    """Short keyed hash to tell whether a secret changed without exposing it."""
+    key = get_settings()["secret_key"].encode("utf-8")
+    return hmac.new(key, plaintext.encode("utf-8"), hashlib.sha256).hexdigest()[:16]

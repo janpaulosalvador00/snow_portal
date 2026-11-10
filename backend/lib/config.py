@@ -27,5 +27,10 @@ def get_settings() -> dict:
             "OAUTH_REDIRECT_URI",
             "http://127.0.0.1:8010",
         ),
+        # CUSTOM Snowflake OAuth integration (empty = LOCAL_APPLICATION + localhost redirect).
+        "oauth_client_id": os.getenv("OAUTH_CLIENT_ID", "").strip(),
+        "oauth_client_secret": os.getenv("OAUTH_CLIENT_SECRET", "").strip(),
         "portal_public_url": os.getenv("PORTAL_PUBLIC_URL", "http://localhost:8501"),
+        # Folder that mirrors connection_tokens as JSON files (empty = disabled).
+        "tokens_export_dir": os.getenv("TOKENS_EXPORT_DIR", "").strip(),
     }

@@ -595,6 +595,142 @@ select:focus {
   flex-wrap: wrap;
 }
 
+/* —— Connection credential (saved token / file / paste) —— */
+.token-source {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.85rem 1rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  min-width: 0;
+}
+
+.token-source legend {
+  padding: 0 0.35rem;
+  font-size: 0.9rem;
+}
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-self: flex-start;
+  gap: 0.25rem;
+  background: #12151a;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem;
+}
+
+.segmented label {
+  display: inline-flex;
+  flex-direction: row;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented label:hover {
+  color: var(--text);
+}
+
+.segmented label.is-checked {
+  background: var(--accent);
+  color: #0b0f14;
+  font-weight: 600;
+}
+
+.segmented label:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.token-source .token-source-box {
+  margin: 0;
+}
+
+.token-source-status {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.token-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.token-file-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.token-file-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.token-upload {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.btn.file-pick {
+  display: inline-flex;
+  flex-direction: row;
+  font-size: inherit;
+}
+
+.btn.file-pick:focus-within,
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn.btn-inline {
+  padding: 0.15rem 0.45rem;
+  color: var(--accent);
+}
+
+.token-upload-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.token-meta {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.25rem 0.85rem;
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  background: #12151a;
+  font-size: 0.82rem;
+}
+
+.token-meta dt {
+  color: var(--muted);
+}
+
+.token-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.method-desc strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -927,6 +1063,75 @@ select:focus {
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 0.65rem;
+}
+
+.chart-toolbar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.info-hint {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem 0.1rem 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #12151a;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  cursor: help;
+  outline: none;
+}
+
+.info-hint:hover,
+.info-hint:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.info-hint-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1;
+}
+
+.info-hint-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: min(360px, 80vw);
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.8rem;
+  letter-spacing: normal;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.info-hint:hover .info-hint-pop,
+.info-hint:focus-visible .info-hint-pop {
+  opacity: 1;
+  visibility: visible;
 }
 
 .chart-view-by {
@@ -2233,6 +2438,44 @@ select:focus {
   font-size: 0.9rem;
 }
 
+.cost-empty-state {
+  margin: 0.5rem 0 1rem;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: #15181d;
+  font-size: 0.9rem;
+  max-width: 760px;
+}
+
+.cost-empty-state-title {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 1rem;
+}
+
+.cost-empty-state p {
+  margin: 0 0 0.5rem;
+}
+
+.cost-empty-state-detail {
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.cost-empty-state-detail summary {
+  cursor: pointer;
+}
+
+.cost-empty-state-detail code {
+  display: block;
+  margin-top: 0.35rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 1180px) {
   .alerts-kpis,
   .alerts-grid {
@@ -2950,4 +3193,76 @@ body.modal-open {
   .channels-event-checks {
     grid-template-columns: 1fr;
   }
+}
+
+/* Snowflake service-user guide (Conexões method help) */
+.sf-guide-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.sf-guide {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.sf-guide > summary {
+  cursor: pointer;
+  color: var(--accent);
+  border-radius: 4px;
+}
+
+.sf-guide > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sf-guide-body p {
+  margin: 0.5rem 0;
+}
+
+.sf-guide-body ol {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.sf-guide code,
+.sf-guide-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+
+.sf-guide-fp {
+  overflow-wrap: anywhere;
+}
+
+.sf-guide-snippet {
+  margin: 0.35rem 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #12151a;
+}
+
+.sf-guide-snippet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.sf-guide-snippet pre {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.45;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
 }

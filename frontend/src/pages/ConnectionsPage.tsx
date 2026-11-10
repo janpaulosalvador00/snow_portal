@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, setActiveConnectionId, getActiveConnectionId } from "../api/client";
+import {
+  buildTokenPayload,
+  emptyTokenChoice,
+  type SavedToken,
+  type SecretResult,
+  type TokenChoice,
+} from "../api/tokens";
 import { useAuth } from "../auth/AuthContext";
+import { revealServiceUserGuide, ServiceUserGuide } from "../components/ServiceUserGuide";
+import { TokenSourceField } from "../components/TokenSourceField";
 import { useRefresh } from "../refresh/RefreshContext";
 
 type Conn = {
@@ -38,6 +47,7 @@ type SessionOptions = {
 type MethodDef = {
   key: string;
   label: string;
+  title: string;
   desc: string;
 };
 
@@ -45,21 +55,61 @@ const METHODS_RECOMMENDED: MethodDef[] = [
   {
     key: "browser_oauth",
     label: "Browser OAuth (como Cortex)",
+    title: "Login via browser (recomendado)",
     desc:
-      "Abre o login Snowflake no seu browser (OAuth local / SNOWFLAKE$LOCAL_APPLICATION). " +
-      "Não precisa de PAT. Mesma ideia do Local OAuth do Cortex Desktop.",
+      "Igual ao Local OAuth do Cortex: você autentica no Snowflake no browser e o portal guarda " +
+      "o token OAuth. Não precisa de PAT, senha nem chave.",
   },
   {
     key: "pat",
     label: "Programmatic Access Token (PAT)",
-    desc: "Token criptografado em repouso. Alternativa se o OAuth via browser falhar.",
+    title: "Token de acesso programático",
+    desc:
+      "Reutilize um PAT já salvo no portal ou, na primeira conexão, selecione o arquivo ou cole " +
+      "o token. Ele fica criptografado no banco.",
   },
   {
     key: "password",
     label: "Password",
+    title: "Usuário e senha",
     desc: "Senha do usuário Snowflake, criptografada em repouso.",
   },
+  {
+    key: "keypair",
+    label: "Key pair (RSA)",
+    title: "Par de chaves RSA",
+    desc:
+      "Autentica com a chave privada (.p8) cuja chave pública está registrada no usuário " +
+      "Snowflake (RSA_PUBLIC_KEY). Reutilize uma chave salva ou selecione o arquivo na primeira conexão.",
+  },
 ];
+
+const EDITABLE_METHODS = new Set(METHODS_RECOMMENDED.map((m) => m.key));
+
+/** Credential fields for the API, or the validation error to show (and field to focus). */
+function credentialPayload(
+  method: string,
+  patChoice: TokenChoice,
+  keyChoice: TokenChoice,
+  password: string,
+  idPrefix: string,
+): SecretResult {
+  if (method === "pat") return buildTokenPayload("pat", patChoice, idPrefix);
+  if (method === "keypair") return buildTokenPayload("keypair", keyChoice, idPrefix);
+  if (method === "password") {
+    return password.trim()
+      ? { ok: true, payload: { secret: password, secret_source: "typed" } }
+      : { ok: false, error: "Informe a senha do usuário Snowflake.", focusId: `${idPrefix}-password` };
+  }
+  return { ok: true, payload: {} };
+}
+
+function focusField(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const target = el.tagName === "FIELDSET" ? el.querySelector<HTMLElement>("input, select") : el;
+  target?.focus();
+}
 
 const ALL_METHODS = METHODS_RECOMMENDED;
 
@@ -120,11 +170,16 @@ export function ConnectionsPage() {
   /** True when the replacement was persisted automatically (no Salvar needed). */
   const [editWhAutoSaved, setEditWhAutoSaved] = useState(false);
   const editSecretRef = useRef<HTMLInputElement>(null);
+  const [editPatChoice, setEditPatChoice] = useState<TokenChoice>(emptyTokenChoice);
+  const [editKeyChoice, setEditKeyChoice] = useState<TokenChoice>(emptyTokenChoice);
   const [method, setMethod] = useState("browser_oauth");
   const [account, setAccount] = useState("");
   const [name, setName] = useState("");
   const [sfUser, setSfUser] = useState("");
   const [secret, setSecret] = useState("");
+  // One choice per method so switching PAT ⇄ Key pair keeps what was picked for each.
+  const [patChoice, setPatChoice] = useState<TokenChoice>(emptyTokenChoice);
+  const [keyChoice, setKeyChoice] = useState<TokenChoice>(emptyTokenChoice);
   const [warehouse, setWarehouse] = useState("");
   const [roleName, setRoleName] = useState("");
   const [signinOptions, setSigninOptions] = useState<SessionOptions | null>(null);
@@ -138,6 +193,9 @@ export function ConnectionsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"test" | "save" | null>(null);
+  const [signinGuideOpen, setSigninGuideOpen] = useState(false);
+  const [editGuideOpen, setEditGuideOpen] = useState(false);
 
   const { refreshToken } = useRefresh();
 
@@ -236,6 +294,32 @@ export function ConnectionsPage() {
     return [account, sfUser, roleName].map((v) => v.trim().toLowerCase()).join("|");
   }
 
+  function applySigninTokenIdentity(t: SavedToken, force: boolean): boolean {
+    let changed = false;
+    if (t.account_identifier && (force || !account.trim())) {
+      setAccount(t.account_identifier);
+      changed = true;
+    }
+    if (t.username && (force || !sfUser.trim())) {
+      setSfUser(t.username);
+      changed = true;
+    }
+    return changed;
+  }
+
+  function applyEditTokenIdentity(t: SavedToken, force: boolean): boolean {
+    let changed = false;
+    if (t.account_identifier && (force || !editAccount.trim())) {
+      setEditAccount(t.account_identifier);
+      changed = true;
+    }
+    if (t.username && (force || !editUser.trim())) {
+      setEditUser(t.username);
+      changed = true;
+    }
+    return changed;
+  }
+
   /** Blank Sign in / Nova conexão form — never copy a saved connection. */
   function resetSigninForm() {
     signinOptionsKeyRef.current = null;
@@ -244,6 +328,8 @@ export function ConnectionsPage() {
     setName("");
     setSfUser("");
     setSecret("");
+    setPatChoice(emptyTokenChoice());
+    setKeyChoice(emptyTokenChoice());
     setWarehouse("");
     setRoleName("");
     setSigninOptions(null);
@@ -267,8 +353,10 @@ export function ConnectionsPage() {
     setEditAccount(c.account_identifier);
     setEditUser(c.username);
     const m = c.auth_method === "oauth" || c.auth_method === "local_oauth" ? "browser_oauth" : c.auth_method;
-    setEditMethod(m === "pat" || m === "password" ? m : "browser_oauth");
+    setEditMethod(EDITABLE_METHODS.has(m) ? m : "browser_oauth");
     setEditSecret("");
+    setEditPatChoice(emptyTokenChoice());
+    setEditKeyChoice(emptyTokenChoice());
     setEditWarehouse(c.warehouse || "");
     setEditRole(c.role_name || "");
     setEditOptions(null);
@@ -394,10 +482,22 @@ export function ConnectionsPage() {
       setSigninOptionsBusy(false);
       return;
     }
-    const resolvedSecret = (secret || secretRef.current?.value || "").trim();
-    if (!account.trim() || !sfUser.trim() || !resolvedSecret) {
-      setSigninOptionsErr("Preencha conta, usuário e PAT/senha para listar opções.");
+    if (!account.trim() || !sfUser.trim()) {
+      setSigninOptionsErr("Preencha conta e usuário para listar warehouses e roles.");
       setSigninOptionsBusy(false);
+      return;
+    }
+    const cred = credentialPayload(
+      method,
+      patChoice,
+      keyChoice,
+      secret || secretRef.current?.value || "",
+      "signin",
+    );
+    if (!cred.ok) {
+      setSigninOptionsErr(cred.error);
+      setSigninOptionsBusy(false);
+      focusField(cred.focusId);
       return;
     }
     try {
@@ -407,7 +507,7 @@ export function ConnectionsPage() {
           account_identifier: account.trim(),
           username: sfUser.trim(),
           auth_method: method,
-          secret: resolvedSecret,
+          ...cred.payload,
           warehouse: warehouse.trim() || null,
           role_name: roleName.trim() || null,
         }),
@@ -469,19 +569,26 @@ export function ConnectionsPage() {
       await reconnectEditOAuth(id);
       return;
     }
-    const resolvedSecret = (editSecret || editSecretRef.current?.value || "").trim();
-    if (!resolvedSecret) {
-      setErr(editMethod === "pat" ? "Cole o novo PAT para revalidar." : "Informe a senha para revalidar.");
+    const cred = credentialPayload(
+      editMethod,
+      editPatChoice,
+      editKeyChoice,
+      editSecret || editSecretRef.current?.value || "",
+      `edit-${id}`,
+    );
+    if (!cred.ok) {
+      setErr(cred.error);
       setBusy(false);
-      editSecretRef.current?.focus();
+      focusField(cred.focusId);
       return;
     }
+    setBusyAction(testOnly ? "test" : "save");
     const payload = {
       name: editName.trim() || undefined,
       account_identifier: editAccount.trim(),
       username: editUser.trim(),
       auth_method: editMethod,
-      secret: resolvedSecret,
+      ...cred.payload,
       warehouse: editWarehouse,
       role_name: editRole,
       clear_warehouse: !editWarehouse.trim(),
@@ -496,7 +603,7 @@ export function ConnectionsPage() {
             account_identifier: payload.account_identifier,
             username: payload.username,
             auth_method: payload.auth_method,
-            secret: payload.secret,
+            ...cred.payload,
             warehouse: editWarehouse.trim() || null,
             role_name: editRole.trim() || null,
           }),
@@ -516,6 +623,7 @@ export function ConnectionsPage() {
       setErr(e instanceof ApiError ? e.message : "Falha ao editar/revalidar conexão.");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -564,23 +672,25 @@ export function ConnectionsPage() {
       await startBrowserOAuth();
       return;
     }
-    setBusy(true);
-    const resolvedSecret = (secret || secretRef.current?.value || "").trim();
-    if (!resolvedSecret) {
-      setErr(
-        method === "pat"
-          ? "Cole o PAT, ou use Browser OAuth (como Cortex) sem token."
-          : "Informe a senha do usuário Snowflake.",
-      );
-      setBusy(false);
-      secretRef.current?.focus();
+    const cred = credentialPayload(
+      method,
+      patChoice,
+      keyChoice,
+      secret || secretRef.current?.value || "",
+      "signin",
+    );
+    if (!cred.ok) {
+      setErr(cred.error);
+      focusField(cred.focusId);
       return;
     }
+    setBusy(true);
+    setBusyAction(testOnly ? "test" : "save");
     const payload = {
       account_identifier: account,
       username: sfUser,
       auth_method: method,
-      secret: resolvedSecret,
+      ...cred.payload,
       warehouse: warehouse || null,
       role_name: roleName || null,
       name: name || null,
@@ -612,17 +722,26 @@ export function ConnectionsPage() {
       setErr(e instanceof ApiError ? e.message : "Falha na conexão.");
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
   const methodMeta = ALL_METHODS.find((m) => m.key === method)!;
+  const editMethodMeta = ALL_METHODS.find((m) => m.key === editMethod) ?? methodMeta;
+  /** Backend error for an unregistered public key (key pair). */
+  const keyNotRegistered = Boolean(err && err.includes("390144"));
+  const keyFingerprint = keyNotRegistered ? (err?.match(/SHA256:[A-Za-z0-9+/=]+/)?.[0] ?? null) : null;
 
   return (
     <div>
       <h1>Conexões Snowflake</h1>
       <p className="muted">Salve contas de clientes e alterne o ambiente ativo.</p>
 
-      {err && tab === "hub" ? <div className="error-box">{err}</div> : null}
+      {err && tab === "hub" && editingId == null ? (
+        <div className="error-box" role="alert">
+          {err}
+        </div>
+      ) : null}
       {msg && tab === "hub" ? <div className="success-box">{msg}</div> : null}
 
       <div className="tabs">
@@ -718,12 +837,19 @@ export function ConnectionsPage() {
                   {isEditing ? (
                     <div className="form-stack" style={{ marginTop: "0.75rem" }}>
                       <div className="info-box">
-                        Revalide como um cadastro novo: altere os campos e autentique de novo
-                        (Browser OAuth ou PAT/senha).
+                        Revalide como um cadastro novo: altere os campos e autentique de novo. Ao
+                        trocar o método, só os campos de credencial mudam.
                       </div>
                       <label>
-                        Method
-                        <select value={editMethod} onChange={(e) => setEditMethod(e.target.value)}>
+                        Método de autenticação
+                        <select
+                          value={editMethod}
+                          onChange={(e) => {
+                            setEditMethod(e.target.value);
+                            setErr(null);
+                          }}
+                          aria-describedby={`edit-${c.id}-method-desc`}
+                        >
                           {METHODS_RECOMMENDED.map((m) => (
                             <option key={m.key} value={m.key}>
                               {m.label}
@@ -731,8 +857,23 @@ export function ConnectionsPage() {
                           ))}
                         </select>
                       </label>
+                      <div className="info-box method-desc" style={{ margin: 0 }}>
+                        <div id={`edit-${c.id}-method-desc`} aria-live="polite">
+                          <strong>{editMethodMeta.title}</strong>
+                          {editMethodMeta.desc}
+                        </div>
+                        <ServiceUserGuide
+                          id={`edit-${c.id}-sf-guide`}
+                          method={editMethod}
+                          username={editUser}
+                          role={editRole}
+                          fingerprint={keyFingerprint}
+                          open={editGuideOpen}
+                          onOpenChange={setEditGuideOpen}
+                        />
+                      </div>
                       <label>
-                        Account Identifier *
+                        Conta (Account Identifier) *
                         <input
                           value={editAccount}
                           onChange={(e) => setEditAccount(e.target.value)}
@@ -740,26 +881,40 @@ export function ConnectionsPage() {
                         />
                       </label>
                       <label>
-                        Nome
+                        Nome da conexão
                         <input value={editName} onChange={(e) => setEditName(e.target.value)} />
                       </label>
                       <label>
-                        Username *
+                        Usuário *
                         <input
                           value={editUser}
                           onChange={(e) => setEditUser(e.target.value)}
                           required
                         />
                       </label>
-                      {editMethod === "pat" || editMethod === "password" ? (
-                        <label>
-                          {editMethod === "pat" ? "Programmatic Access Token *" : "Password *"}
+                      {editMethod === "pat" || editMethod === "keypair" ? (
+                        <TokenSourceField
+                          key={`${c.id}-${editMethod}`}
+                          idPrefix={`edit-${c.id}`}
+                          kind={editMethod}
+                          value={editMethod === "pat" ? editPatChoice : editKeyChoice}
+                          onChange={editMethod === "pat" ? setEditPatChoice : setEditKeyChoice}
+                          account={editAccount}
+                          username={editUser}
+                          onUseTokenIdentity={applyEditTokenIdentity}
+                          currentConnectionId={c.id}
+                        />
+                      ) : editMethod === "password" ? (
+                        <label htmlFor={`edit-${c.id}-password`}>
+                          Senha *
                           <input
+                            id={`edit-${c.id}-password`}
                             ref={editSecretRef}
                             type="password"
                             value={editSecret}
                             onChange={(e) => setEditSecret(e.target.value)}
-                            placeholder="Obrigatório para revalidar"
+                            placeholder="Obrigatória para revalidar"
+                            autoComplete="current-password"
                             required
                           />
                         </label>
@@ -905,6 +1060,25 @@ export function ConnectionsPage() {
                           )}
                         </div>
                       ) : null}
+                      {err ? (
+                        <div className="error-box" role="alert" style={{ margin: 0 }}>
+                          {err}
+                          {keyNotRegistered && editMethod === "keypair" ? (
+                            <div className="row-actions" style={{ marginTop: "0.5rem" }}>
+                              <button
+                                type="button"
+                                className="btn"
+                                aria-controls={`edit-${c.id}-sf-guide`}
+                                onClick={() =>
+                                  revealServiceUserGuide(`edit-${c.id}-sf-guide`, setEditGuideOpen)
+                                }
+                              >
+                                Como registrar a chave no Snowflake
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <div className="row-actions">
                         {editMethod === "browser_oauth" ? (
                           <>
@@ -931,17 +1105,19 @@ export function ConnectionsPage() {
                               type="button"
                               className="btn"
                               disabled={busy}
+                              aria-busy={busyAction === "test"}
                               onClick={() => void saveEdit(c.id, true)}
                             >
-                              Testar conexão
+                              {busyAction === "test" ? "Testando…" : "Testar conexão"}
                             </button>
                             <button
                               type="button"
                               className="btn primary"
                               disabled={busy}
+                              aria-busy={busyAction === "save"}
                               onClick={() => void saveEdit(c.id, false)}
                             >
-                              Salvar e revalidar
+                              {busyAction === "save" ? "Salvando…" : "Salvar e revalidar"}
                             </button>
                           </>
                         )}
@@ -977,17 +1153,19 @@ export function ConnectionsPage() {
             void submit(false);
           }}
         >
-          <div className="info-box">
-            <strong>Login via browser (recomendado)</strong>
-            <p style={{ marginBottom: 0 }}>
-              Igual ao Local OAuth do Cortex: você autentica no Snowflake no browser; o portal
-              guarda o token OAuth. Não usa PAT nem usuário de serviço.
-            </p>
-          </div>
-
-          <label>
-            Method
-            <select value={method} onChange={(e) => setMethod(e.target.value)}>
+          <label htmlFor="signin-method">
+            Método de autenticação
+            <select
+              id="signin-method"
+              value={method}
+              onChange={(e) => {
+                setMethod(e.target.value);
+                setErr(null);
+                setMsg(null);
+                setSigninOptionsErr(null);
+              }}
+              aria-describedby="signin-method-desc"
+            >
               {METHODS_RECOMMENDED.map((m) => (
                 <option key={m.key} value={m.key}>
                   {m.label}
@@ -995,10 +1173,24 @@ export function ConnectionsPage() {
               ))}
             </select>
           </label>
-          <div className="info-box">{methodMeta.desc}</div>
+          <div className="info-box method-desc">
+            <div id="signin-method-desc" aria-live="polite">
+              <strong>{methodMeta.title}</strong>
+              {methodMeta.desc}
+            </div>
+            <ServiceUserGuide
+              id="signin-sf-guide"
+              method={method}
+              username={sfUser}
+              role={roleName}
+              fingerprint={keyFingerprint}
+              open={signinGuideOpen}
+              onOpenChange={setSigninGuideOpen}
+            />
+          </div>
 
           <label>
-            Account Identifier *
+            Conta (Account Identifier) *
             <input
               value={account}
               onChange={(e) => setAccount(e.target.value)}
@@ -1008,7 +1200,7 @@ export function ConnectionsPage() {
             />
           </label>
           <label>
-            Connection Name
+            Nome da conexão
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -1017,7 +1209,7 @@ export function ConnectionsPage() {
             />
           </label>
           <label>
-            Username *
+            Usuário *
             <input
               value={sfUser}
               onChange={(e) => setSfUser(e.target.value)}
@@ -1027,14 +1219,28 @@ export function ConnectionsPage() {
             />
           </label>
 
-          {method === "pat" || method === "password" ? (
-            <label>
-              {method === "pat" ? "Programmatic Access Token *" : "Password *"}
+          {method === "pat" || method === "keypair" ? (
+            <TokenSourceField
+              key={method}
+              idPrefix="signin"
+              kind={method}
+              value={method === "pat" ? patChoice : keyChoice}
+              onChange={method === "pat" ? setPatChoice : setKeyChoice}
+              account={account}
+              username={sfUser}
+              onUseTokenIdentity={applySigninTokenIdentity}
+            />
+          ) : null}
+          {method === "password" ? (
+            <label htmlFor="signin-password">
+              Senha *
               <input
+                id="signin-password"
                 ref={secretRef}
                 type="password"
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
+                autoComplete="current-password"
                 required
               />
             </label>
@@ -1097,14 +1303,21 @@ export function ConnectionsPage() {
               ))}
             </datalist>
             <div className="row-actions">
-              <button
-                type="button"
-                className="btn"
-                disabled={signinOptionsBusy || busy}
-                onClick={() => void loadSigninOptions()}
-              >
-                {signinOptionsBusy ? "Listando…" : "Listar WH / Roles da conta"}
-              </button>
+              {method === "browser_oauth" ? (
+                <p className="muted" style={{ margin: 0, alignSelf: "center", fontSize: "0.85rem" }}>
+                  Com Browser OAuth, a lista de warehouses e roles aparece em Editar após o login.
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={signinOptionsBusy || busy}
+                  aria-busy={signinOptionsBusy}
+                  onClick={() => void loadSigninOptions()}
+                >
+                  {signinOptionsBusy ? "Listando…" : "Listar WH / Roles da conta"}
+                </button>
+              )}
               <button
                 type="button"
                 className="btn ghost"
@@ -1143,8 +1356,28 @@ export function ConnectionsPage() {
             </select>
           </label>
 
-          {err ? <div className="error-box">{err}</div> : null}
-          {msg ? <div className="success-box">{msg}</div> : null}
+          {err ? (
+            <div className="error-box" role="alert">
+              {err}
+              {keyNotRegistered && method === "keypair" ? (
+                <div className="row-actions" style={{ marginTop: "0.5rem" }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    aria-controls="signin-sf-guide"
+                    onClick={() => revealServiceUserGuide("signin-sf-guide", setSigninGuideOpen)}
+                  >
+                    Como registrar a chave no Snowflake
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {msg ? (
+            <div className="success-box" role="status">
+              {msg}
+            </div>
+          ) : null}
 
           <div className="row-actions">
             {method === "browser_oauth" ? (
@@ -1157,12 +1390,18 @@ export function ConnectionsPage() {
                   type="button"
                   className="btn"
                   disabled={busy}
+                  aria-busy={busyAction === "test"}
                   onClick={() => void submit(true)}
                 >
-                  Testar conexão
+                  {busyAction === "test" ? "Testando…" : "Testar conexão"}
                 </button>
-                <button type="submit" className="btn primary" disabled={busy}>
-                  Sign In / Salvar
+                <button
+                  type="submit"
+                  className="btn primary"
+                  disabled={busy}
+                  aria-busy={busyAction === "save"}
+                >
+                  {busyAction === "save" ? "Salvando…" : "Sign In / Salvar"}
                 </button>
               </>
             )}

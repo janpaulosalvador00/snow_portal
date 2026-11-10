@@ -9,6 +9,7 @@ __pycache__/
 .DS_Store
 *.log
 data/
+tokens/
 .idea/
 .vscode/
 node_modules/

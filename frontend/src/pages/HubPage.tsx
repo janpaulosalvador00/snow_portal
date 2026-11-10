@@ -11,6 +11,7 @@ import { CostSkeleton } from "../components/cost/CostChrome";
 import { ErrorBanner } from "../components/cost/ErrorBanner";
 import { MonitorsPanel } from "../components/cost/MonitorsPanel";
 import type { Monitor } from "../components/cost/MonitorsTable";
+import { useRefresh } from "../refresh/RefreshContext";
 
 type Conn = {
   id: number;
@@ -42,6 +43,7 @@ export function HubPage() {
   const [monitorsErr, setMonitorsErr] = useState<string | null>(null);
   const [monitorsLoading, setMonitorsLoading] = useState(false);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const { refreshToken, refreshError } = useRefresh();
 
   useEffect(() => {
     void api<Conn[]>("/api/connections")
@@ -133,9 +135,9 @@ export function HubPage() {
       window.clearTimeout(t);
       loadAbortRef.current?.abort();
     };
-    // Re-load when active connection changes (not when the connections list identity churns).
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only activeId
-  }, [activeId]);
+    // Re-load when active connection changes or after a global refresh (not on list churn).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only activeId + refreshToken
+  }, [activeId, refreshToken]);
 
   const active = connections.find((c) => c.id === activeId);
   const canSelect = connections.length > 1;
@@ -212,6 +214,9 @@ export function HubPage() {
           </p>
         ) : (
           <>
+            {refreshError ? (
+              <div className="warn-box refresh-error-box">{refreshError}</div>
+            ) : null}
             {monitorsErr && !hasMonitorsData ? (
               <ErrorBanner message={monitorsErr} connectionId={activeId} />
             ) : null}
@@ -222,7 +227,6 @@ export function HubPage() {
                   items={monitors}
                   note={monitorsNote}
                   accountOptions={orgAccountNames}
-                  onRefresh={() => void loadMonitors(activeId)}
                   loading={monitorsLoading}
                 />
               </div>

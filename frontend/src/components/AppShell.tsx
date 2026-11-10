@@ -9,6 +9,18 @@ import { createPortal } from "react-dom";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ALERTS_BADGE_EVENT, getAlerts } from "../api/alerts";
 import { useAuth } from "../auth/AuthContext";
+import { RefreshProvider, useRefresh } from "../refresh/RefreshContext";
+
+function AlertsBadgeRefresher() {
+  const { refreshToken } = useRefresh();
+
+  useEffect(() => {
+    if (refreshToken === 0) return;
+    void getAlerts({ force: true }).catch(() => undefined);
+  }, [refreshToken]);
+
+  return null;
+}
 
 function NavIcon({ children }: { children: ReactNode }) {
   return (
@@ -105,6 +117,7 @@ export function AppShell() {
   }
 
   return (
+    <RefreshProvider>
     <div className="app-shell">
       <aside className="sidebar" onWheel={onSidebarWheel}>
         <div className="brand">Snow Portal</div>
@@ -226,8 +239,10 @@ export function AppShell() {
         </button>
       </aside>
       <main className="main">
+        <AlertsBadgeRefresher />
         <Outlet />
       </main>
     </div>
+    </RefreshProvider>
   );
 }

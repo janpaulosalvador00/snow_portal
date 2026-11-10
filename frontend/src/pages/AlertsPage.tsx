@@ -7,6 +7,7 @@ import {
   type AlertsResponse,
 } from "../api/alerts";
 import { ApiError } from "../api/client";
+import { useRefresh } from "../refresh/RefreshContext";
 
 type SeverityFilter = "all" | "alert" | "critical";
 type CardInterval = "global" | "0" | "60" | "300" | "600" | "900" | "1800" | "3600";
@@ -101,19 +102,23 @@ export function AlertsPage() {
     useState<Record<number, CardInterval>>(loadCardIntervals);
   const [lastUpdates, setLastUpdates] = useState<Record<number, string>>({});
   const [headerLastUpdate, setHeaderLastUpdate] = useState<string | null>(null);
+  const { refreshAll, refreshToken, refreshing } = useRefresh();
 
   const applyFullResponse = useCallback((response: AlertsResponse) => {
     setData(response);
     setHeaderLastUpdate(response.fetched_at);
     setLastUpdates(
-      Object.fromEntries(response.clients.map((client) => [client.id, response.fetched_at])),
+      Object.fromEntries(
+        response.clients.map((client) => [client.id, client.fetched_at || response.fetched_at]),
+      ),
     );
     announceAlertsBadge(response.critical_clients);
   }, []);
 
+  // Reads the Postgres cache; after a global refresh the active account is already fresh.
   useEffect(() => {
     let cancelled = false;
-    void getAlerts()
+    void getAlerts({ force: refreshToken > 0 })
       .then((response) => {
         if (!cancelled) applyFullResponse(response);
       })
@@ -130,7 +135,7 @@ export function AlertsPage() {
     return () => {
       cancelled = true;
     };
-  }, [applyFullResponse]);
+  }, [applyFullResponse, refreshToken]);
 
   const refreshConnections = useCallback(
     async (ids?: number[], updateHeader = false) => {
@@ -142,6 +147,7 @@ export function AlertsPage() {
         const response = await getAlerts({
           force: all,
           connectionIds: all ? undefined : ids,
+          refreshIds: ids,
         });
         if (all) {
           applyFullResponse(response);
@@ -158,7 +164,11 @@ export function AlertsPage() {
         });
         setLastUpdates((current) => ({
           ...current,
-          ...Object.fromEntries([...refreshedIds].map((id) => [id, response.fetched_at])),
+          ...Object.fromEntries(
+            response.clients
+              .filter((client) => refreshedIds.has(client.id))
+              .map((client) => [client.id, client.fetched_at || response.fetched_at]),
+          ),
         }));
         if (updateHeader) setHeaderLastUpdate(response.fetched_at);
       } catch (reason) {
@@ -208,6 +218,16 @@ export function AlertsPage() {
     }
     return () => timers.forEach((timer) => window.clearInterval(timer));
   }, [cardIntervals, data?.clients, globalInterval, refreshConnections]);
+
+  /** Card ↻: refresh every dataset of this account; the refreshToken bump re-reads the cards. */
+  async function refreshAccountEverywhere(id: number) {
+    setRefreshingIds((current) => [...new Set([...current, id])]);
+    try {
+      await refreshAll(id);
+    } finally {
+      setRefreshingIds((current) => current.filter((value) => value !== id));
+    }
+  }
 
   function setClientInterval(id: number, value: CardInterval) {
     setCardIntervals((current) => {
@@ -309,22 +329,13 @@ export function AlertsPage() {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              className="btn primary alerts-refresh-all"
-              disabled={refreshingAll}
-              onClick={() => void refreshConnections()}
-            >
-              <span aria-hidden>↻</span>
-              {refreshingAll ? "Atualizando…" : "Atualizar todas"}
-            </button>
           </div>
         </div>
 
         <div className="alerts-status-bar">
           <p className="alerts-status-line">
             <span
-              className={`alerts-status-dot${refreshingAll ? " is-busy" : ""}`}
+              className={`alerts-status-dot${refreshingAll || refreshing ? " is-busy" : ""}`}
               aria-hidden
             />
             <span role="status" aria-live="polite">
@@ -521,8 +532,9 @@ export function AlertsPage() {
                       type="button"
                       className="btn alerts-small-btn"
                       disabled={refreshing}
-                      onClick={() => void refreshConnections([client.id])}
-                      aria-label={`Atualizar ${client.name}`}
+                      onClick={() => void refreshAccountEverywhere(client.id)}
+                      aria-label={`Atualizar ${client.name} em todas as telas`}
+                      title={`Atualizar ${client.name} em todas as telas`}
                     >
                       ↻
                     </button>

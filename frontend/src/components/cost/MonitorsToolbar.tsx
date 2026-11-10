@@ -1,3 +1,4 @@
+import { RefreshIconButton } from "../../refresh/RefreshIconButton";
 import { FilterPill } from "./FilterPill";
 
 type Props = {
@@ -16,7 +17,6 @@ type Props = {
   frequency: string;
   onFrequency: (v: string) => void;
   frequencies: string[];
-  onRefresh: () => void;
   loading?: boolean;
 };
 
@@ -36,7 +36,6 @@ export function MonitorsToolbar({
   frequency,
   onFrequency,
   frequencies,
-  onRefresh,
   loading,
 }: Props) {
   return (
@@ -91,16 +90,7 @@ export function MonitorsToolbar({
           onChange={onFrequency}
           options={frequencies.map((f) => ({ value: f, label: f }))}
         />
-        <button
-          type="button"
-          className="btn icon-refresh"
-          onClick={onRefresh}
-          disabled={loading}
-          title="Atualizar"
-          aria-label="Atualizar"
-        >
-          ↻
-        </button>
+        <RefreshIconButton disabled={loading} />
       </div>
     </div>
   );

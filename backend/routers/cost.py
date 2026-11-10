@@ -1,10 +1,10 @@
-"""Cost Management API — all tabs."""
+"""Cost Management API — all tabs (served from the Postgres Snowflake cache)."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.lib import db
-from backend.lib import cost_queries
+from backend.lib import snowflake_cache as cache
 from backend.lib.snowflake_client import friendly_connect_error
 from backend.security import get_current_user
 
@@ -17,6 +17,23 @@ def _creds(user: dict, connection_id: int) -> dict:
     try:
         return db.get_connection_credentials(connection_id)
     except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _check_window(start_date: str | None, end_date: str | None) -> None:
+    if (start_date and not end_date) or (end_date and not start_date):
+        raise HTTPException(
+            status_code=400,
+            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
+        )
+
+
+def _cached(connection_id: int, creds: dict, dataset: str, params: dict) -> dict:
+    try:
+        return cache.cached_fetch(connection_id, dataset, params, creds=creds)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -33,25 +50,18 @@ def cost_consumption(
     user: dict = Depends(get_current_user),
 ):
     creds = _creds(user, connection_id)
-    svc = None if not service_type or service_type == "All" else service_type
-    res = None if not resource_name or resource_name == "All" else resource_name
-    if (start_date and not end_date) or (end_date and not start_date):
-        raise HTTPException(
-            status_code=400,
-            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
-        )
+    _check_window(start_date, end_date)
+    params = cache.consumption_params(
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        usage_type=usage_type,
+        service_type=service_type,
+        resource_name=resource_name,
+        grain=grain,
+    )
     try:
-        raw = cost_queries.fetch_consumption_for_creds(
-            creds,
-            days=days,
-            grain=grain if grain in ("day", "month", "hour") else "day",
-            service_type=svc,
-            usage_type=usage_type,
-            resource_name=res,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        return cost_queries.consumption_payload(raw)
+        return cache.cached_fetch(connection_id, "consumption", params, creds=creds)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -74,17 +84,13 @@ def cost_account_overview(
     user: dict = Depends(get_current_user),
 ):
     creds = _creds(user, connection_id)
-    if (start_date and not end_date) or (end_date and not start_date):
-        raise HTTPException(
-            status_code=400,
-            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
-        )
-    try:
-        return cost_queries.account_overview(
-            creds, days=days, start_date=start_date, end_date=end_date
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _check_window(start_date, end_date)
+    return _cached(
+        connection_id,
+        creds,
+        "account_overview",
+        cache.window_params(days, start_date, end_date),
+    )
 
 
 @router.get("/anomalies")
@@ -96,17 +102,10 @@ def cost_anomalies(
     user: dict = Depends(get_current_user),
 ):
     creds = _creds(user, connection_id)
-    if (start_date and not end_date) or (end_date and not start_date):
-        raise HTTPException(
-            status_code=400,
-            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
-        )
-    try:
-        return cost_queries.anomalies(
-            creds, days=days, start_date=start_date, end_date=end_date
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _check_window(start_date, end_date)
+    return _cached(
+        connection_id, creds, "anomalies", cache.window_params(days, start_date, end_date)
+    )
 
 
 @router.get("/resource-monitors")
@@ -115,10 +114,7 @@ def cost_resource_monitors(
     user: dict = Depends(get_current_user),
 ):
     creds = _creds(user, connection_id)
-    try:
-        return cost_queries.resource_monitors(creds)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _cached(connection_id, creds, "resource_monitors", {})
 
 
 @router.get("/budgets")
@@ -127,10 +123,7 @@ def cost_budgets(
     user: dict = Depends(get_current_user),
 ):
     creds = _creds(user, connection_id)
-    try:
-        return cost_queries.budgets(creds)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _cached(connection_id, creds, "budgets", {})
 
 
 @router.get("/organization-overview")
@@ -142,17 +135,13 @@ def cost_organization_overview(
     user: dict = Depends(get_current_user),
 ):
     creds = _creds(user, connection_id)
-    if (start_date and not end_date) or (end_date and not start_date):
-        raise HTTPException(
-            status_code=400,
-            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
-        )
-    try:
-        return cost_queries.organization_overview(
-            creds, days=days, start_date=start_date, end_date=end_date
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _check_window(start_date, end_date)
+    return _cached(
+        connection_id,
+        creds,
+        "organization_overview",
+        cache.window_params(days, start_date, end_date),
+    )
 
 
 @router.get("/org-accounts")
@@ -165,28 +154,10 @@ def cost_org_accounts(
 ):
     """Account names for the Consumption All Accounts filter (ORGANIZATION_USAGE)."""
     creds = _creds(user, connection_id)
-    if (start_date and not end_date) or (end_date and not start_date):
-        raise HTTPException(
-            status_code=400,
-            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
-        )
-    fallback = (
-        creds.get("account")
-        or creds.get("account_identifier")
-        or None
+    _check_window(start_date, end_date)
+    return _cached(
+        connection_id, creds, "org_accounts", cache.window_params(days, start_date, end_date)
     )
-    try:
-        return cost_queries.list_org_accounts(
-            creds,
-            days=days,
-            start_date=start_date,
-            end_date=end_date,
-            fallback_name=str(fallback) if fallback else None,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/org-consumption")
@@ -202,20 +173,12 @@ def cost_org_consumption(
 ):
     """Consumption stacked by org account (Snowflake All Accounts view)."""
     creds = _creds(user, connection_id)
-    if (start_date and not end_date) or (end_date and not start_date):
-        raise HTTPException(
-            status_code=400,
-            detail="Informe start_date e end_date juntos (YYYY-MM-DD).",
-        )
-    try:
-        return cost_queries.org_consumption_by_account(
-            creds,
-            days=days,
-            start_date=start_date,
-            end_date=end_date,
-            account_name=account_name,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _check_window(start_date, end_date)
+    return _cached(
+        connection_id,
+        creds,
+        "org_consumption",
+        cache.org_consumption_params(
+            days=days, start_date=start_date, end_date=end_date, account_name=account_name
+        ),
+    )

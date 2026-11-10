@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, setActiveConnectionId, getActiveConnectionId } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { useRefresh } from "../refresh/RefreshContext";
 
 type Conn = {
   id: number;
@@ -30,6 +31,8 @@ type SessionOptions = {
   /** Set when API auto-persisted a replacement for a missing stored WH. */
   warehouse_auto_saved?: string | null;
   hint?: string;
+  cached?: boolean;
+  fetched_at?: string | null;
 };
 
 type MethodDef = {
@@ -127,6 +130,8 @@ export function ConnectionsPage() {
   const [signinOptions, setSigninOptions] = useState<SessionOptions | null>(null);
   const [signinOptionsErr, setSigninOptionsErr] = useState<string | null>(null);
   const [signinOptionsBusy, setSigninOptionsBusy] = useState(false);
+  /** Account/user/role the listed signinOptions belong to; only then are they sent on save. */
+  const signinOptionsKeyRef = useRef<string | null>(null);
   const [signinManualWh, setSigninManualWh] = useState(false);
   const [signinManualRole, setSigninManualRole] = useState(false);
   const [teamId, setTeamId] = useState<number | "">("");
@@ -134,10 +139,22 @@ export function ConnectionsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const { refreshToken } = useRefresh();
+
   async function reload() {
     const list = await api<Conn[]>("/api/connections");
     setConnections(list);
   }
+
+  // Global refresh re-fetched the active account: pick up a healed WH and fresh WH/roles.
+  useEffect(() => {
+    if (refreshToken === 0) return;
+    void reload().catch(() => undefined);
+    if (editingId != null && editingId === getActiveConnectionId()) {
+      void loadEditOptions(editingId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on global refresh
+  }, [refreshToken]);
 
   useEffect(() => {
     void reload().catch(() => setConnections([]));
@@ -215,8 +232,13 @@ export function ConnectionsPage() {
     setMsg("Conexão inativada. Cost Management exige uma conta ativa.");
   }
 
+  function signinIdentityKey(): string {
+    return [account, sfUser, roleName].map((v) => v.trim().toLowerCase()).join("|");
+  }
+
   /** Blank Sign in / Nova conexão form — never copy a saved connection. */
   function resetSigninForm() {
+    signinOptionsKeyRef.current = null;
     setMethod("browser_oauth");
     setAccount("");
     setName("");
@@ -260,13 +282,14 @@ export function ConnectionsPage() {
     void loadEditOptions(c.id);
   }
 
-  async function loadEditOptions(connectionId: number) {
+  /** Cached WH/roles from Postgres; `refresh` re-queries Snowflake and updates the cache. */
+  async function loadEditOptions(connectionId: number, refresh = false) {
     setEditOptionsBusy(true);
     setEditOptionsErr(null);
     setEditWhAutoSaved(false);
     try {
       const res = await api<SessionOptions & { ok?: boolean }>(
-        `/api/connections/${connectionId}/options`,
+        `/api/connections/${connectionId}/options${refresh ? "?refresh=1" : ""}`,
       );
       setEditOptions(res);
       setEditManualWh(false);
@@ -274,10 +297,10 @@ export function ConnectionsPage() {
 
       const autoSaved = (res.warehouse_auto_saved || "").trim();
       const suggested = (res.suggested_warehouse || "").trim();
-      // API may already have healed; older APIs still return stored_warehouse_exists=false.
+      // API may already have healed; never heal from a cached (possibly stale) payload.
       const needsHeal =
         Boolean(autoSaved) ||
-        (res.stored_warehouse_exists === false && Boolean(suggested));
+        (!res.cached && res.stored_warehouse_exists === false && Boolean(suggested));
 
       if (needsHeal) {
         const next = autoSaved || suggested;
@@ -390,6 +413,7 @@ export function ConnectionsPage() {
         }),
       });
       setSigninOptions(res);
+      signinOptionsKeyRef.current = signinIdentityKey();
       setSigninManualWh(false);
       setSigninManualRole(false);
       if (!warehouse.trim() && res.suggested_warehouse) {
@@ -570,9 +594,13 @@ export function ConnectionsPage() {
         });
         setMsg(res.message);
       } else {
+        const options =
+          signinOptions && signinOptionsKeyRef.current === signinIdentityKey()
+            ? signinOptions
+            : null;
         const res = await api<{ message: string; connection: Conn }>(
           "/api/connections",
-          { method: "POST", body: JSON.stringify(payload) },
+          { method: "POST", body: JSON.stringify({ ...payload, options }) },
         );
         setMsg(res.message);
         setActiveConnectionId(res.connection.id);
@@ -820,10 +848,19 @@ export function ConnectionsPage() {
                           type="button"
                           className="btn"
                           disabled={editOptionsBusy || busy}
-                          onClick={() => void loadEditOptions(c.id)}
+                          onClick={() => void loadEditOptions(c.id, true)}
                         >
                           {editOptionsBusy ? "Atualizando…" : "Atualizar WH / Roles"}
                         </button>
+                        {editOptions?.fetched_at ? (
+                          <span className="muted" style={{ alignSelf: "center", fontSize: "0.8rem" }}>
+                            Atualizado em{" "}
+                            {new Date(editOptions.fetched_at).toLocaleString("pt-BR", {
+                              dateStyle: "short",
+                              timeStyle: "short",
+                            })}
+                          </span>
+                        ) : null}
                         <button
                           type="button"
                           className="btn ghost"

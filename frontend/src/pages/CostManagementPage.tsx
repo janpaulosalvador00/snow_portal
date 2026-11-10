@@ -21,6 +21,8 @@ import { ErrorBanner } from "../components/cost/ErrorBanner";
 import { FilterPill } from "../components/cost/FilterPill";
 import { MonitorsPanel } from "../components/cost/MonitorsPanel";
 import { StackedConsumptionChart } from "../components/cost/StackedConsumptionChart";
+import { useRefresh } from "../refresh/RefreshContext";
+import { RefreshIconButton } from "../refresh/RefreshIconButton";
 
 type Conn = {
   id: number;
@@ -142,6 +144,7 @@ export function CostManagementPage() {
   const [tab, setTab] = useState<CostTab>("Consumption");
   const loadAbortRef = useRef<AbortController | null>(null);
   const skipConnListRefresh = useRef(true);
+  const { refreshToken, refreshError } = useRefresh();
 
   /** Keep warehouse pill in sync with Conexões (saved `connection.warehouse`). */
   function reloadConnections(opts?: { syncActive?: boolean }) {
@@ -185,6 +188,11 @@ export function CostManagementPage() {
     if (connectionId === "") return;
     reloadConnections();
   }, [connectionId]);
+
+  // Global refresh may have healed the stored warehouse; pick it up for the pill.
+  useEffect(() => {
+    if (refreshToken > 0) reloadConnections();
+  }, [refreshToken]);
 
   // If stored WH is gone on the account, /options auto-persists the suggested WH —
   // then refresh the connections list so the header pill updates without visiting Conexões.
@@ -377,7 +385,7 @@ export function CostManagementPage() {
       loadAbortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, tab, dateKey, usageType, serviceType, orgAccountFilter]);
+  }, [connectionId, tab, dateKey, usageType, serviceType, orgAccountFilter, refreshToken]);
 
   // Changing Service Type invalidates resource picks from other service types.
   useEffect(() => {
@@ -636,19 +644,13 @@ export function CostManagementPage() {
               </>
             ) : null}
             {tab !== "Resource Monitors" ? (
-              <button
-                type="button"
-                className="btn icon-refresh"
-                onClick={() => void load()}
-                disabled={loading}
-                title="Atualizar"
-                aria-label="Atualizar"
-              >
-                ↻
-              </button>
+              <RefreshIconButton disabled={loading} />
             ) : null}
           </div>
 
+          {refreshError ? (
+            <div className="warn-box refresh-error-box">{refreshError}</div>
+          ) : null}
           {err ? <ErrorBanner message={err} connectionId={connectionId} /> : null}
 
           {loading && !err && !hasTabData ? <CostSkeleton /> : null}
@@ -771,7 +773,6 @@ export function CostManagementPage() {
               <MonitorsPanel
                 items={monitors.items || []}
                 note={monitors.note}
-                onRefresh={() => void load()}
                 loading={loading}
               />
             </div>

@@ -876,6 +876,24 @@ select:focus {
   line-height: 1;
 }
 
+.btn.icon-refresh > span {
+  display: inline-block;
+}
+
+.btn.icon-refresh.is-spinning > span {
+  animation: icon-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes icon-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.refresh-error-box {
+  margin-bottom: 0.75rem;
+}
+
 .cost-kpi {
   font-size: 2rem;
   font-weight: 600;

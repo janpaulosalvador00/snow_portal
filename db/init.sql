@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS connections (
     account_identifier  VARCHAR(200) NOT NULL,
     username            VARCHAR(200) NOT NULL,
     auth_method         VARCHAR(32) NOT NULL DEFAULT 'oauth'
-                        CHECK (auth_method IN ('local_oauth', 'sso', 'password', 'pat', 'oauth')),
+                        CHECK (auth_method IN ('local_oauth', 'sso', 'password', 'pat', 'oauth', 'keypair')),
     authenticator_url   VARCHAR(500),
     pat_encrypted       TEXT,
     warehouse           VARCHAR(200),
@@ -86,7 +86,50 @@ CREATE TABLE IF NOT EXISTS snowflake_cache (
     PRIMARY KEY (connection_id, dataset, params_key)
 );
 
+-- Connection secrets, one row per (connection, token_type). Value stays Fernet-encrypted;
+-- no FK so revoked rows survive connection deletion as an audit trail.
+CREATE TABLE IF NOT EXISTS connection_tokens (
+    id                  SERIAL PRIMARY KEY,
+    connection_id       INT NOT NULL,
+    connection_name     VARCHAR(200),
+    account_identifier  VARCHAR(200),
+    username            VARCHAR(200),
+    role_name           VARCHAR(200),
+    auth_method         VARCHAR(32),
+    token_type          VARCHAR(32) NOT NULL
+                        CONSTRAINT connection_tokens_token_type_check
+                        CHECK (token_type IN ('oauth_access', 'oauth_refresh', 'pat', 'password', 'private_key')),
+    token_encrypted     TEXT,
+    fingerprint         VARCHAR(16),
+    status              VARCHAR(16) NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'expired', 'revoked')),
+    issued_at           TIMESTAMPTZ,
+    expires_at          TIMESTAMPTZ,
+    last_refreshed_at   TIMESTAMPTZ,
+    revoked_at          TIMESTAMPTZ,
+    file_name           VARCHAR(300),
+    -- origin of the secret: oauth | typed | upload | folder | saved_token (+ original file name)
+    source              VARCHAR(16),
+    source_file         VARCHAR(300),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (connection_id, token_type)
+);
+
+CREATE OR REPLACE VIEW v_connection_tokens AS
+SELECT id, connection_id, connection_name, account_identifier, username, role_name,
+       auth_method, token_type,
+       CASE WHEN status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()
+            THEN 'expired' ELSE status END AS status,
+       fingerprint, issued_at, expires_at, last_refreshed_at, revoked_at,
+       file_name, created_at, updated_at, source, source_file
+FROM connection_tokens;
+
 CREATE INDEX IF NOT EXISTS idx_oauth_pending_created ON oauth_pending(created_at);
+CREATE INDEX IF NOT EXISTS idx_connection_tokens_connection ON connection_tokens(connection_id);
+CREATE INDEX IF NOT EXISTS idx_connection_tokens_status_expires
+ON connection_tokens(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_connection_tokens_account ON connection_tokens(account_identifier);
 CREATE INDEX IF NOT EXISTS idx_snowflake_cache_accessed
 ON snowflake_cache(connection_id, last_accessed_at);
 CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);

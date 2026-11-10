@@ -2,25 +2,80 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Generator, Iterable
 
 import bcrypt
 import psycopg2
 import psycopg2.extras
 
+from backend.lib import token_export
 from backend.lib.config import get_settings
-from backend.lib.crypto import decrypt_secret, encrypt_secret
+from backend.lib.crypto import decrypt_secret, encrypt_secret, secret_fingerprint
 from backend.lib.snowflake_client import normalize_account_identifier
 
-AUTH_METHODS = ("local_oauth", "sso", "password", "pat", "oauth")
+logger = logging.getLogger(__name__)
+
+AUTH_METHODS = ("local_oauth", "sso", "password", "pat", "oauth", "keypair")
 AUTH_METHOD_LABELS = {
     "oauth": "Browser OAuth (Cortex)",
     "local_oauth": "Browser OAuth (Cortex)",
     "sso": "External Browser (SSO)",
     "password": "Password",
     "pat": "Programmatic Access Token (PAT)",
+    "keypair": "Key pair (RSA)",
 }
+# Methods whose credential lives (encrypted) in connections.pat_encrypted.
+SECRET_METHODS = ("pat", "password", "keypair", "oauth", "local_oauth")
+
+TOKEN_TYPES = ("oauth_access", "oauth_refresh", "pat", "password", "private_key")
+TOKEN_STATUSES = ("active", "expired", "revoked")
+TOKEN_SOURCES = ("oauth", "typed", "upload", "folder", "saved_token")
+_SQL_TOKEN_TYPES = ", ".join(f"'{t}'" for t in TOKEN_TYPES)
+_SQL_AUTH_METHODS = ", ".join(f"'{m}'" for m in AUTH_METHODS)
+
+# No FK to connections: revoked rows outlive the connection as an audit trail.
+CONNECTION_TOKENS_DDL = """
+CREATE TABLE IF NOT EXISTS connection_tokens (
+    id                  SERIAL PRIMARY KEY,
+    connection_id       INT NOT NULL,
+    connection_name     VARCHAR(200),
+    account_identifier  VARCHAR(200),
+    username            VARCHAR(200),
+    role_name           VARCHAR(200),
+    auth_method         VARCHAR(32),
+    token_type          VARCHAR(32) NOT NULL
+                        CONSTRAINT connection_tokens_token_type_check
+                        CHECK (token_type IN ({_SQL_TOKEN_TYPES})),
+    token_encrypted     TEXT,
+    fingerprint         VARCHAR(16),
+    status              VARCHAR(16) NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'expired', 'revoked')),
+    issued_at           TIMESTAMPTZ,
+    expires_at          TIMESTAMPTZ,
+    last_refreshed_at   TIMESTAMPTZ,
+    revoked_at          TIMESTAMPTZ,
+    file_name           VARCHAR(300),
+    source              VARCHAR(16),
+    source_file         VARCHAR(300),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (connection_id, token_type)
+)
+""".replace("{_SQL_TOKEN_TYPES}", _SQL_TOKEN_TYPES)
+
+CONNECTION_TOKENS_VIEW_DDL = """
+CREATE OR REPLACE VIEW v_connection_tokens AS
+SELECT id, connection_id, connection_name, account_identifier, username, role_name,
+       auth_method, token_type,
+       CASE WHEN status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()
+            THEN 'expired' ELSE status END AS status,
+       fingerprint, issued_at, expires_at, last_refreshed_at, revoked_at,
+       file_name, created_at, updated_at, source, source_file
+FROM connection_tokens
+"""
 
 
 def get_connection():
@@ -88,10 +143,10 @@ def ensure_schema() -> None:
             """
         )
         cur.execute(
-            """
+            f"""
             ALTER TABLE connections
             ADD CONSTRAINT connections_auth_method_check
-            CHECK (auth_method IN ('local_oauth', 'sso', 'password', 'pat', 'oauth'))
+            CHECK (auth_method IN ({_SQL_AUTH_METHODS}))
             """
         )
         # Browser OAuth pending state must survive API restarts (in-memory alone loses mid-login).
@@ -181,6 +236,40 @@ def ensure_schema() -> None:
             ON snowflake_cache(connection_id, last_accessed_at)
             """
         )
+        cur.execute(CONNECTION_TOKENS_DDL)
+        cur.execute("ALTER TABLE connection_tokens ADD COLUMN IF NOT EXISTS source VARCHAR(16)")
+        cur.execute(
+            "ALTER TABLE connection_tokens ADD COLUMN IF NOT EXISTS source_file VARCHAR(300)"
+        )
+        cur.execute(
+            "ALTER TABLE connection_tokens DROP CONSTRAINT IF EXISTS connection_tokens_token_type_check"
+        )
+        cur.execute(
+            f"""
+            ALTER TABLE connection_tokens
+            ADD CONSTRAINT connection_tokens_token_type_check
+            CHECK (token_type IN ({_SQL_TOKEN_TYPES}))
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_connection_tokens_connection
+            ON connection_tokens(connection_id)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_connection_tokens_status_expires
+            ON connection_tokens(status, expires_at)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_connection_tokens_account
+            ON connection_tokens(account_identifier)
+            """
+        )
+        cur.execute(CONNECTION_TOKENS_VIEW_DDL)
 
 
 def get_cache(connection_id: int, dataset: str, params_key: str) -> dict | None:
@@ -470,7 +559,7 @@ def get_connection_credentials(connection_id: int) -> dict:
     if row.get("pat_encrypted"):
         secret = decrypt_secret(row["pat_encrypted"])
 
-    if method in ("pat", "password", "oauth", "local_oauth") and not secret:
+    if method in SECRET_METHODS and not secret:
         raise ValueError("Conexão sem credencial armazenada. Refaça o login via browser ou PAT.")
 
     return {
@@ -504,6 +593,7 @@ def create_connection(
     created_by: int,
     team_id: int | None,
     acl_team_ids: Iterable[int] | None = None,
+    secret_source: dict | None = None,
     # legacy alias
     pat: str | None = None,
 ) -> int:
@@ -511,7 +601,7 @@ def create_connection(
         raise ValueError(f"auth_method inválido: {auth_method}")
 
     secret_value = secret if secret is not None else pat
-    if auth_method in ("pat", "password", "oauth", "local_oauth"):
+    if auth_method in SECRET_METHODS:
         if not secret_value:
             raise ValueError("Credencial obrigatória para este método.")
         encrypted = encrypt_secret(secret_value)
@@ -556,12 +646,15 @@ def create_connection(
                 """,
                 (conn_id, tid),
             )
-        return conn_id
+    _sync_tokens_safely(conn_id, source=secret_source)
+    return conn_id
 
 
 def delete_connection(connection_id: int) -> None:
     with db_cursor(commit=True) as cur:
+        _revoke_tokens(cur, connection_id)
         cur.execute("DELETE FROM connections WHERE id = %s", (connection_id,))
+    token_export.remove_token_files(connection_id)
 
 
 def update_connection(
@@ -578,6 +671,7 @@ def update_connection(
     clear_warehouse: bool = False,
     clear_role: bool = False,
     update_secret: bool = False,
+    secret_source: dict | None = None,
 ) -> dict:
     """Update connection fields; optionally replace credentials (re-auth)."""
     row = get_connection_by_id(connection_id)
@@ -619,7 +713,7 @@ def update_connection(
 
     encrypted = row.get("pat_encrypted")
     if update_secret:
-        if new_method in ("pat", "password", "oauth", "local_oauth"):
+        if new_method in SECRET_METHODS:
             if not secret:
                 raise ValueError("Credencial obrigatória para revalidar este método.")
             encrypted = encrypt_secret(secret)
@@ -655,6 +749,7 @@ def update_connection(
             ),
         )
         updated = cur.fetchone()
+    _sync_tokens_safely(connection_id, source=secret_source if update_secret else None)
     return updated
 
 
@@ -670,6 +765,326 @@ def update_connection_secret(connection_id: int, secret: str) -> None:
             """,
             (encrypted, connection_id),
         )
+    _sync_tokens_safely(connection_id, refreshed=True)
+
+
+def _derive_tokens(row: dict) -> list[dict] | None:
+    """Split a connection's stored secret into token entries (None = undecryptable)."""
+    method = row.get("auth_method") or "pat"
+    if not row.get("pat_encrypted"):
+        return []
+    try:
+        secret = decrypt_secret(row["pat_encrypted"])
+    except ValueError as exc:
+        logger.warning("connection_tokens: cannot decrypt connection %s: %s", row["id"], exc)
+        return None
+    if method in ("pat", "password"):
+        return [{"token_type": method, "value": secret, "expires_in": None}]
+    if method == "keypair":
+        return [{"token_type": "private_key", "value": secret, "expires_in": None}]
+    if method in ("oauth", "local_oauth"):
+        stripped = secret.strip()
+        blob = json.loads(stripped) if stripped.startswith("{") else {"access_token": stripped}
+        tokens = []
+        if blob.get("access_token"):
+            tokens.append(
+                {
+                    "token_type": "oauth_access",
+                    "value": blob["access_token"],
+                    "expires_in": blob.get("expires_in"),
+                }
+            )
+        if blob.get("refresh_token"):
+            tokens.append(
+                {
+                    "token_type": "oauth_refresh",
+                    "value": blob["refresh_token"],
+                    "expires_in": blob.get("refresh_token_expires_in"),
+                }
+            )
+        return tokens
+    return []
+
+
+def _revoke_tokens(cur, connection_id: int, token_types: Iterable[str] | None = None) -> int:
+    sql = """
+        UPDATE connection_tokens
+        SET status = 'revoked', token_encrypted = NULL, file_name = NULL,
+            revoked_at = NOW(), updated_at = NOW()
+        WHERE connection_id = %s AND status <> 'revoked'
+    """
+    params: list[Any] = [connection_id]
+    if token_types is not None:
+        sql += " AND token_type = ANY(%s)"
+        params.append(list(token_types))
+    cur.execute(sql, params)
+    return cur.rowcount
+
+
+def sync_connection_tokens(
+    connection_id: int,
+    *,
+    refreshed: bool = False,
+    source: dict | None = None,
+) -> list[dict]:
+    """Mirror connections.pat_encrypted into connection_tokens + JSON files.
+
+    Unchanged tokens (same fingerprint) keep their ciphertext, issued_at,
+    expires_at and origin; tokens no longer present are revoked. ``source``
+    ({"source", "source_file"}) records where a newly supplied secret came from.
+    Returns the active rows.
+    """
+    now = datetime.now(timezone.utc)
+    exporting = token_export.export_dir() is not None
+    with db_cursor(commit=True) as cur:
+        cur.execute("SELECT * FROM connections WHERE id = %s", (connection_id,))
+        conn = cur.fetchone()
+        if not conn:
+            _revoke_tokens(cur, connection_id)
+            tokens: list[dict] | None = []
+        else:
+            tokens = _derive_tokens(conn)
+        if tokens is None:
+            return []
+        cur.execute("SELECT * FROM connection_tokens WHERE connection_id = %s", (connection_id,))
+        existing = {r["token_type"]: r for r in cur.fetchall()}
+        for tok in tokens:
+            ttype = tok["token_type"]
+            fingerprint = secret_fingerprint(tok["value"])
+            prev = existing.get(ttype)
+            unchanged = (
+                prev is not None
+                and prev["status"] != "revoked"
+                and prev["token_encrypted"]
+                and prev["fingerprint"] == fingerprint
+            )
+            if unchanged:
+                encrypted = prev["token_encrypted"]
+                issued_at = prev["issued_at"]
+                expires_at = prev["expires_at"]
+                last_refreshed_at = prev["last_refreshed_at"]
+            else:
+                encrypted = encrypt_secret(tok["value"])
+                issued_at = conn.get("updated_at") or now
+                expires_at = None
+                if tok.get("expires_in"):
+                    try:
+                        expires_at = issued_at + timedelta(seconds=int(tok["expires_in"]))
+                    except (TypeError, ValueError):
+                        expires_at = None
+                last_refreshed_at = (
+                    now if refreshed else (prev["last_refreshed_at"] if prev else None)
+                )
+            if source and source.get("source") in TOKEN_SOURCES:
+                origin, origin_file = source["source"], source.get("source_file")
+            elif unchanged and prev.get("source"):
+                origin, origin_file = prev["source"], prev.get("source_file")
+            elif ttype.startswith("oauth_"):
+                origin, origin_file = "oauth", None
+            else:
+                origin, origin_file = None, None
+            origin_file = (origin_file or "")[:300] or None
+            status = "expired" if expires_at is not None and expires_at <= now else "active"
+            fname = (
+                token_export.file_name(connection_id, conn["account_identifier"], ttype)
+                if exporting
+                else None
+            )
+            cur.execute(
+                """
+                INSERT INTO connection_tokens (
+                    connection_id, connection_name, account_identifier, username,
+                    role_name, auth_method, token_type, token_encrypted, fingerprint,
+                    status, issued_at, expires_at, last_refreshed_at, revoked_at, file_name,
+                    source, source_file
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s)
+                ON CONFLICT (connection_id, token_type) DO UPDATE
+                SET connection_name = EXCLUDED.connection_name,
+                    account_identifier = EXCLUDED.account_identifier,
+                    username = EXCLUDED.username,
+                    role_name = EXCLUDED.role_name,
+                    auth_method = EXCLUDED.auth_method,
+                    token_encrypted = EXCLUDED.token_encrypted,
+                    fingerprint = EXCLUDED.fingerprint,
+                    status = EXCLUDED.status,
+                    issued_at = EXCLUDED.issued_at,
+                    expires_at = EXCLUDED.expires_at,
+                    last_refreshed_at = EXCLUDED.last_refreshed_at,
+                    revoked_at = NULL,
+                    file_name = EXCLUDED.file_name,
+                    source = EXCLUDED.source,
+                    source_file = EXCLUDED.source_file,
+                    updated_at = NOW()
+                WHERE (
+                    connection_tokens.connection_name, connection_tokens.account_identifier,
+                    connection_tokens.username, connection_tokens.role_name,
+                    connection_tokens.auth_method, connection_tokens.token_encrypted,
+                    connection_tokens.status, connection_tokens.issued_at,
+                    connection_tokens.expires_at, connection_tokens.last_refreshed_at,
+                    connection_tokens.revoked_at, connection_tokens.file_name,
+                    connection_tokens.source, connection_tokens.source_file
+                ) IS DISTINCT FROM (
+                    EXCLUDED.connection_name, EXCLUDED.account_identifier,
+                    EXCLUDED.username, EXCLUDED.role_name,
+                    EXCLUDED.auth_method, EXCLUDED.token_encrypted,
+                    EXCLUDED.status, EXCLUDED.issued_at,
+                    EXCLUDED.expires_at, EXCLUDED.last_refreshed_at,
+                    NULL::timestamptz, EXCLUDED.file_name,
+                    EXCLUDED.source, EXCLUDED.source_file
+                )
+                """,
+                (
+                    connection_id,
+                    conn["name"],
+                    conn["account_identifier"],
+                    conn["username"],
+                    conn.get("role_name"),
+                    conn.get("auth_method") or "pat",
+                    ttype,
+                    encrypted,
+                    fingerprint,
+                    status,
+                    issued_at,
+                    expires_at,
+                    last_refreshed_at,
+                    fname,
+                    origin,
+                    origin_file,
+                ),
+            )
+        stale = [t for t in existing if t not in {tok["token_type"] for tok in tokens}]
+        if stale:
+            _revoke_tokens(cur, connection_id, stale)
+        cur.execute(
+            """
+            SELECT * FROM connection_tokens
+            WHERE connection_id = %s AND status <> 'revoked'
+            ORDER BY token_type
+            """,
+            (connection_id,),
+        )
+        active = [dict(r) for r in cur.fetchall()]
+
+    written = {name for name in (token_export.write_token_file(r) for r in active) if name}
+    token_export.remove_token_files(connection_id, keep=written)
+    return active
+
+
+def _sync_tokens_safely(
+    connection_id: int, *, refreshed: bool = False, source: dict | None = None
+) -> None:
+    try:
+        sync_connection_tokens(connection_id, refreshed=refreshed, source=source)
+    except Exception:  # noqa: BLE001
+        logger.exception("connection_tokens sync failed for connection %s", connection_id)
+
+
+TOKEN_TYPE_FOR_METHOD = {"pat": "pat", "password": "password", "keypair": "private_key"}
+
+
+def list_saved_tokens(user: dict, *, token_type: str | None = None) -> list[dict]:
+    """Reusable secrets (metadata only), one entry per distinct secret.
+
+    Rows sharing a fingerprint (same secret reused by several connections) are
+    merged; ``connections`` lists every connection using it.
+    """
+    allowed = None if user["role"] == "admin" else {
+        c["id"] for c in list_connections_for_user(user)
+    }
+    sql = """
+        SELECT v.id, v.connection_id, v.connection_name, v.account_identifier, v.username,
+               v.role_name, v.auth_method, v.token_type, v.status, v.fingerprint,
+               v.issued_at, v.expires_at, v.last_refreshed_at, v.updated_at,
+               v.source, v.source_file
+        FROM v_connection_tokens v
+        JOIN connections c ON c.id = v.connection_id
+        WHERE v.status <> 'revoked' AND v.token_type = ANY(%s)
+        ORDER BY v.updated_at DESC, v.id DESC
+    """
+    reusable = list(TOKEN_TYPE_FOR_METHOD.values())
+    params: list[Any] = [[token_type] if token_type in reusable else reusable]
+    with db_cursor() as cur:
+        cur.execute(sql, params)
+        rows = [dict(r) for r in cur.fetchall()]
+
+    merged: dict[tuple, dict] = {}
+    for row in rows:
+        if allowed is not None and row["connection_id"] not in allowed:
+            continue
+        key = (row["token_type"], row["fingerprint"])
+        ref = {"id": row["connection_id"], "name": row["connection_name"]}
+        if key in merged:
+            merged[key]["connections"].append(ref)
+            continue
+        row["connections"] = [ref]
+        merged[key] = row
+    return list(merged.values())
+
+
+def get_saved_token_secret(user: dict, token_id: int, *, token_type: str) -> tuple[dict, str]:
+    """Decrypt a saved token for server-side reuse; never return it to the client."""
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT v.*, t.token_encrypted
+            FROM v_connection_tokens v
+            JOIN connection_tokens t ON t.id = v.id
+            WHERE v.id = %s
+            """,
+            (token_id,),
+        )
+        row = cur.fetchone()
+    if not row or row["status"] == "revoked" or not row.get("token_encrypted"):
+        raise ValueError("Token salvo não encontrado ou revogado. Escolha outro ou selecione um arquivo.")
+    if not user_can_access_connection(user, row["connection_id"]):
+        raise PermissionError("Sem permissão para usar este token.")
+    if row["token_type"] != token_type:
+        raise ValueError("O token salvo escolhido não é do tipo deste método.")
+    if row["status"] == "expired":
+        raise ValueError("Token salvo expirado. Escolha outro ou selecione um arquivo novo.")
+    secret = decrypt_secret(row.pop("token_encrypted"))
+    return dict(row), secret
+
+
+def backfill_connection_tokens() -> dict:
+    """Reconcile connection_tokens + files with every connection (idempotent)."""
+    with db_cursor() as cur:
+        cur.execute("SELECT id FROM connections ORDER BY id")
+        ids = [r["id"] for r in cur.fetchall()]
+    errors = 0
+    for cid in ids:
+        try:
+            sync_connection_tokens(cid)
+        except Exception:  # noqa: BLE001
+            errors += 1
+            logger.exception("connection_tokens backfill failed for connection %s", cid)
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE connection_tokens
+            SET status = 'revoked', token_encrypted = NULL, file_name = NULL,
+                revoked_at = NOW(), updated_at = NOW()
+            WHERE status <> 'revoked'
+              AND connection_id NOT IN (SELECT id FROM connections)
+            """
+        )
+        orphans_revoked = cur.rowcount
+        cur.execute(
+            "SELECT DISTINCT connection_id FROM connection_tokens WHERE status <> 'revoked'"
+        )
+        active_ids = {r["connection_id"] for r in cur.fetchall()}
+        cur.execute("SELECT status, COUNT(*) AS n FROM v_connection_tokens GROUP BY status")
+        by_status = {r["status"]: int(r["n"]) for r in cur.fetchall()}
+    orphan_files = token_export.remove_orphan_files(active_ids)
+    return {
+        "connections": len(ids),
+        "errors": errors,
+        "orphans_revoked": orphans_revoked,
+        "orphan_files_removed": orphan_files,
+        "by_status": by_status,
+        "export_dir": str(token_export.export_dir() or ""),
+    }
 
 
 def user_can_access_connection(user: dict, connection_id: int) -> bool:

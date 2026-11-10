@@ -10,5 +10,9 @@ Diagramas do banco Postgres do portal (cadastro editável). A partir da v3, as m
 | [snow_portal_er_v2.mmd](snow_portal_er_v2.mmd) | v2 | Fonte Mermaid do modelo atualizado |
 | [snow_portal_er_v3.png](snow_portal_er_v3.png) | v3 | Adiciona `snowflake_cache`: cache por conexão dos dados do Snowflake (Consumption, Overview, Anomalies, Monitors, Budgets, Org, opções WH/roles) |
 | [snow_portal_er_v3.mmd](snow_portal_er_v3.mmd) | v3 | Fonte Mermaid do modelo atualizado |
+| [snow_portal_er_v4.png](snow_portal_er_v4.png) | v4 | Adiciona `connection_tokens` (+ view `v_connection_tokens`): um registro por segredo de conexão (OAuth access/refresh, PAT, senha), valor Fernet + metadados legíveis; sem FK para manter histórico `revoked` após remover a conexão |
+| [snow_portal_er_v4.mmd](snow_portal_er_v4.mmd) | v4 | Fonte Mermaid do modelo atualizado |
+| [snow_portal_er_v5.png](snow_portal_er_v5.png) | v5 | `connection_tokens` ganha `source` (oauth / typed / upload / folder / saved_token) e `source_file` (arquivo de origem) e o tipo `private_key`; `connections.auth_method` aceita `keypair` (Key pair RSA / SNOWFLAKE_JWT) |
+| [snow_portal_er_v5.mmd](snow_portal_er_v5.mmd) | v5 | Fonte Mermaid do modelo atualizado |
 
-Próximas alterações: salvar como `snow_portal_er_v4.png` (+ `.mmd`) sem sobrescrever versões anteriores.
+Próximas alterações: salvar como `snow_portal_er_v6.png` (+ `.mmd`) sem sobrescrever versões anteriores.

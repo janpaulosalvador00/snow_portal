@@ -1,0 +1,94 @@
+/* Tela Tokens — reaproveita admin-* / channels-* de index.css */
+.tokens-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 2rem);
+  margin: -0.25rem 0 0;
+}
+
+.tokens-lead {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.tokens-kpi-expired {
+  border-top-color: var(--danger);
+}
+.tokens-kpi-expired .admin-kpi-value strong {
+  color: var(--danger);
+}
+
+.tokens-revoked-toggle {
+  padding: 0 0.25rem;
+  white-space: nowrap;
+}
+
+.tokens-table {
+  --table-max-h: min(62vh, 640px);
+  overflow-x: auto;
+}
+
+.tokens-table .admin-table-head,
+.tokens-table .admin-table-row {
+  min-width: 1480px;
+  grid-template-columns:
+    minmax(0, 1.2fr) minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 0.9fr)
+    minmax(0, 1.1fr) 0.85fr 0.7fr 1fr 1.05fr 1fr 0.7fr minmax(0, 1.4fr);
+}
+
+.tokens-muted {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.tokens-note {
+  font-style: italic;
+}
+
+.tokens-expiry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.tokens-expiry small {
+  font-size: 0.74rem;
+}
+
+.tokens-expiry-rel.is-past {
+  color: #f0c0c0;
+  font-weight: 600;
+}
+
+.tokens-expiry-rel.is-soon {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.admin-badge.is-token-expired {
+  color: #f0c0c0;
+  background: rgba(196, 92, 92, 0.14);
+  border-color: rgba(196, 92, 92, 0.45);
+}
+
+.tokens-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(196, 92, 92, 0.45);
+  border-radius: 8px;
+  background: rgba(196, 92, 92, 0.1);
+  color: #f0c0c0;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 860px) {
+  .tokens-revoked-toggle {
+    width: 100%;
+  }
+}

@@ -14,8 +14,10 @@ from pydantic import BaseModel, Field
 from backend.lib import db
 from backend.lib import oauth_local
 from backend.lib import snowflake_cache as cache
+from backend.lib import token_sources
 from backend.lib.snowflake_client import (
     discover_session_options,
+    friendly_connect_error,
     test_connection,
 )
 from backend.security import get_current_user
@@ -57,12 +59,32 @@ Se não redirecionar, <a href="{redirect_url}">clique aqui</a>.</p>
     return HTMLResponse(html)
 
 
-class ConnectionCreate(BaseModel):
+class SecretInput(BaseModel):
+    """Credential for PAT / password / key pair, from exactly one origin.
+
+    ``token_id`` reuses a row of connection_tokens and ``token_file`` reads a file
+    from the tokens folder (both server-side); ``secret`` is typed/pasted or the
+    content of a browser upload (``secret_source='upload'`` + ``secret_file_name``).
+    """
+
+    secret: str | None = None
+    secret_source: str | None = None
+    secret_file_name: str | None = None
+    token_id: int | None = None
+    token_file: str | None = None
+    passphrase: str | None = None
+
+    def has_secret_input(self) -> bool:
+        return bool(
+            (self.secret or "").strip() or self.token_id is not None or (self.token_file or "").strip()
+        )
+
+
+class ConnectionCreate(SecretInput):
     name: str | None = None
     account_identifier: str = Field(min_length=1)
     username: str = Field(min_length=1)
     auth_method: str = "pat"
-    secret: str | None = None
     authenticator_url: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
@@ -70,11 +92,10 @@ class ConnectionCreate(BaseModel):
     options: dict[str, Any] | None = None
 
 
-class ConnectionTest(BaseModel):
+class ConnectionTest(SecretInput):
     account_identifier: str = Field(min_length=1)
     username: str = Field(min_length=1)
     auth_method: str = "pat"
-    secret: str | None = None
     authenticator_url: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
@@ -90,12 +111,11 @@ class OAuthStart(BaseModel):
     connection_id: int | None = None
 
 
-class ConnectionUpdate(BaseModel):
+class ConnectionUpdate(SecretInput):
     name: str | None = None
     account_identifier: str | None = None
     username: str | None = None
     auth_method: str | None = None
-    secret: str | None = None
     authenticator_url: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
@@ -104,16 +124,53 @@ class ConnectionUpdate(BaseModel):
     revalidate: bool = True
 
 
-class ConnectionDiscover(BaseModel):
+class ConnectionDiscover(SecretInput):
     """Ad-hoc credentials for Sign-in form before a connection is saved."""
 
     account_identifier: str = Field(min_length=1)
     username: str = Field(min_length=1)
     auth_method: str = "pat"
-    secret: str | None = None
     authenticator_url: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
+
+
+SECRET_REQUIRED_METHODS = tuple(db.TOKEN_TYPE_FOR_METHOD)
+_MISSING_SECRET = {
+    "pat": "Escolha um token salvo, selecione um arquivo ou cole o PAT.",
+    "password": "Informe a senha do usuário Snowflake.",
+    "keypair": "Escolha uma chave salva ou selecione o arquivo da chave privada (.p8).",
+}
+
+
+def _normalize_method(raw: str | None) -> str:
+    method = (raw or "pat").strip().lower()
+    return "oauth" if method == "browser_oauth" else method
+
+
+def _resolve_secret(user: dict, method: str, body: SecretInput) -> tuple[str | None, dict | None]:
+    try:
+        return token_sources.resolve_secret(
+            user,
+            method,
+            secret=body.secret,
+            secret_source=body.secret_source,
+            secret_file_name=body.secret_file_name,
+            token_id=body.token_id,
+            token_file=body.token_file,
+            passphrase=body.passphrase,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _require_secret(user: dict, method: str, body: SecretInput) -> tuple[str | None, dict | None]:
+    secret, origin = _resolve_secret(user, method, body)
+    if method in SECRET_REQUIRED_METHODS and not secret:
+        raise HTTPException(status_code=400, detail=_MISSING_SECRET[method])
+    return secret, origin
 
 
 def _serialize(row: dict) -> dict:
@@ -139,12 +196,13 @@ def list_connections(user: dict = Depends(get_current_user)):
 
 @router.post("/api/connections/test")
 def test_conn(body: ConnectionTest, user: dict = Depends(get_current_user)):
-    _ = user
+    method = _normalize_method(body.auth_method)
+    secret, _origin = _require_secret(user, method, body)
     ok, msg = test_connection(
         account=body.account_identifier,
         user=body.username,
-        auth_method=body.auth_method,
-        password=body.secret,
+        auth_method=method,
+        password=secret,
         authenticator_url=body.authenticator_url,
         warehouse=body.warehouse,
         role=body.role_name,
@@ -238,44 +296,42 @@ def refresh_connection_data(connection_id: int, user: dict = Depends(get_current
 @router.post("/api/connections/discover")
 def discover_options(body: ConnectionDiscover, user: dict = Depends(get_current_user)):
     """Discover WH/roles with ad-hoc credentials (Sign-in / before save)."""
-    _ = user
-    method = (body.auth_method or "pat").lower()
-    if method == "browser_oauth":
-        method = "oauth"
-    if method in ("pat", "password") and not (body.secret or "").strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Informe PAT/senha para listar warehouses e roles, ou salve a conexão via Browser OAuth e use Editar.",
-        )
+    method = _normalize_method(body.auth_method)
     if method in ("oauth", "local_oauth") and not (body.secret or "").strip():
         raise HTTPException(
             status_code=400,
             detail="Browser OAuth precisa de token salvo. Após conectar, use Editar → atualizar lista.",
         )
+    secret, _origin = _require_secret(user, method, body)
     try:
         options = discover_session_options(
             account=body.account_identifier,
             user=body.username,
             auth_method=method,
-            password=body.secret,
+            password=secret,
             authenticator_url=body.authenticator_url,
             warehouse=body.warehouse,
             role=body.role_name,
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail=friendly_connect_error(exc, auth_method=method, secret=secret),
+        ) from exc
     return {"ok": True, **options}
 
 
 @router.post("/api/connections")
 def create_connection(body: ConnectionCreate, user: dict = Depends(get_current_user)):
     team_id = body.team_id or user.get("team_id")
+    method = _normalize_method(body.auth_method)
+    secret, origin = _require_secret(user, method, body)
     try:
         ok, msg = test_connection(
             account=body.account_identifier,
             user=body.username,
-            auth_method=body.auth_method,
-            password=body.secret,
+            auth_method=method,
+            password=secret,
             authenticator_url=body.authenticator_url,
             warehouse=body.warehouse,
             role=body.role_name,
@@ -287,14 +343,15 @@ def create_connection(body: ConnectionCreate, user: dict = Depends(get_current_u
             name=(body.name or "").strip() or body.account_identifier.strip(),
             account_identifier=body.account_identifier,
             username=body.username,
-            auth_method=body.auth_method,
-            secret=body.secret,
+            auth_method=method,
+            secret=secret,
             authenticator_url=body.authenticator_url,
             warehouse=body.warehouse,
             role_name=body.role_name,
             created_by=user["id"],
             team_id=team_id,
             acl_team_ids=[team_id] if team_id else [],
+            secret_source=origin,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -326,23 +383,25 @@ def patch_connection(
     if not existing:
         raise HTTPException(status_code=404, detail="Conexão não encontrada.")
 
-    method = body.auth_method or existing.get("auth_method") or "pat"
-    if method == "browser_oauth":
-        method = "oauth"
+    method = _normalize_method(body.auth_method or existing.get("auth_method"))
+    secret, origin = (
+        _resolve_secret(user, method, body) if body.has_secret_input() else (None, None)
+    )
+
+    method_changed = method != _normalize_method(existing.get("auth_method"))
+    if method_changed and method in SECRET_REQUIRED_METHODS and not secret:
+        raise HTTPException(status_code=400, detail=_MISSING_SECRET[method])
 
     message = "Conexão atualizada."
-    # Full revalidation like a new signup (PAT/password require secret)
-    if body.revalidate and method in ("pat", "password"):
-        if not body.secret:
-            raise HTTPException(
-                status_code=400,
-                detail="Informe PAT/senha para revalidar a autenticação.",
-            )
+    # Full revalidation like a new signup (PAT/password/key pair require a credential)
+    if body.revalidate and method in SECRET_REQUIRED_METHODS:
+        if not secret:
+            raise HTTPException(status_code=400, detail=_MISSING_SECRET[method])
         ok, msg = test_connection(
             account=body.account_identifier or existing["account_identifier"],
             user=body.username or existing["username"],
             auth_method=method,
-            password=body.secret,
+            password=secret,
             authenticator_url=body.authenticator_url,
             warehouse=None
             if body.clear_warehouse
@@ -373,20 +432,20 @@ def patch_connection(
             account_identifier=body.account_identifier,
             username=body.username,
             auth_method=method,
-            secret=body.secret,
+            secret=secret,
             authenticator_url=body.authenticator_url,
             warehouse=body.warehouse,
             role_name=body.role_name,
             clear_warehouse=body.clear_warehouse,
             clear_role=body.clear_role,
-            update_secret=bool(body.secret)
-            and method in ("pat", "password", "oauth", "local_oauth"),
+            update_secret=bool(secret) and method in db.SECRET_METHODS,
+            secret_source=origin,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     identity_changed = (
-        bool(body.secret)
+        bool(secret)
         or (
             body.account_identifier is not None
             and row["account_identifier"] != existing["account_identifier"]
@@ -504,6 +563,7 @@ def oauth_callback(
             code=code,
             code_verifier=pending["code_verifier"],
             redirect_uri=pending["redirect_uri"],
+            client_id=pending.get("client_id"),
         )
         secret = oauth_local.pack_oauth_secret(tokens)
         username = (

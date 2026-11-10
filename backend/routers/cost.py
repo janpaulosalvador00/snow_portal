@@ -123,7 +123,14 @@ def cost_budgets(
     user: dict = Depends(get_current_user),
 ):
     creds = _creds(user, connection_id)
-    return _cached(connection_id, creds, "budgets", {})
+    payload = _cached(connection_id, creds, "budgets", {})
+    if "supported" not in payload:
+        # Cache rows from before the structured payload still carry the raw Snowflake error.
+        try:
+            payload = cache.cached_fetch(connection_id, "budgets", {}, creds=creds, force=True)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return payload
 
 
 @router.get("/organization-overview")

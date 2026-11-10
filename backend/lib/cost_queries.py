@@ -11,7 +11,10 @@ from backend.lib.metering import (
     summarize_by_resource,
 )
 from backend.lib.snowflake_client import (
+    _refresh_oauth_locked,
+    ensure_fresh_oauth_credentials,
     friendly_connect_error,
+    is_oauth_token_error,
     run_query_with_creds,
     snowflake_connection,
 )
@@ -326,35 +329,33 @@ def anomalies(
     }
 
 
-def _run_show(creds: dict, sql: str) -> tuple[pd.DataFrame | None, str | None]:
-    try:
-        with snowflake_connection(**_creds_kwargs(creds)) as conn:
-            cur = conn.cursor()
-            cur.execute(sql)
-            cols = [c[0] for c in cur.description] if cur.description else []
-            rows = cur.fetchall()
-            df = pd.DataFrame(rows, columns=cols)
-            if not df.empty:
-                df.columns = [str(c).lower() for c in df.columns]
-            return df, None
-    except Exception as exc:  # noqa: BLE001
-        # try refresh once for oauth
-        try:
-            from backend.lib.snowflake_client import refresh_oauth_credentials
+def _show_frame(creds: dict, sql: str) -> pd.DataFrame:
+    with snowflake_connection(**_creds_kwargs(creds)) as conn:
+        cur = conn.cursor()
+        cur.execute(sql)
+        cols = [c[0] for c in cur.description] if cur.description else []
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows, columns=cols)
+        if not df.empty:
+            df.columns = [str(c).lower() for c in df.columns]
+        return df
 
-            connection_id = creds.get("row", {}).get("id") if isinstance(creds.get("row"), dict) else None
-            refreshed = refresh_oauth_credentials(creds, connection_id=connection_id)
-            with snowflake_connection(**_creds_kwargs(refreshed)) as conn:
-                cur = conn.cursor()
-                cur.execute(sql)
-                cols = [c[0] for c in cur.description] if cur.description else []
-                rows = cur.fetchall()
-                df = pd.DataFrame(rows, columns=cols)
-                if not df.empty:
-                    df.columns = [str(c).lower() for c in df.columns]
-                return df, None
+
+def _run_show(creds: dict, sql: str) -> tuple[pd.DataFrame | None, str | None]:
+    row = creds.get("row")
+    connection_id = row.get("id") if isinstance(row, dict) else None
+    method = (creds.get("auth_method") or "").lower()
+    creds = ensure_fresh_oauth_credentials(creds, connection_id=connection_id)
+    try:
+        return _show_frame(creds, sql), None
+    except Exception as exc:  # noqa: BLE001
+        if method not in ("oauth", "local_oauth") or not is_oauth_token_error(exc):
+            return None, friendly_connect_error(exc, auth_method=method)
+        try:
+            creds = _refresh_oauth_locked(creds, connection_id=connection_id)
+            return _show_frame(creds, sql), None
         except Exception as exc2:  # noqa: BLE001
-            return None, friendly_connect_error(exc2, auth_method=creds.get("auth_method"))
+            return None, friendly_connect_error(exc2, auth_method=method)
 
 
 def resource_monitors(creds: dict) -> dict[str, Any]:
@@ -462,20 +463,74 @@ def resource_monitors(creds: dict) -> dict[str, Any]:
     return {"items": items, "account_name": account_name, "note": None}
 
 
+_BUDGETS_PRIVILEGE_MARKERS = (
+    "insufficient privilege",
+    "not authorized",
+    "access denied",
+    "003001",
+)
+_BUDGETS_UNSUPPORTED_MARKERS = (
+    "unsupported",
+    "not supported",
+    "syntax error",
+)
+
+_BUDGETS_UNAVAILABLE = {
+    "unsupported": {
+        "message": "O recurso Budgets do Snowflake não está habilitado ou disponível nesta conta.",
+        "help": (
+            "Budgets não é suportado em alguns tipos de conta (ex.: reader/trial) ou "
+            "regiões, e precisa ser ativado em Snowsight › Admin › Cost Management › "
+            "Budgets (budget da conta ou budgets personalizados). Depois de ativado, "
+            "os budgets aparecem aqui na próxima atualização."
+        ),
+    },
+    "privileges": {
+        "message": "A role desta conexão não tem privilégio para consultar Budgets.",
+        "help": (
+            "Conceda à role a application role SNOWFLAKE.BUDGET_VIEWER (budget da conta) "
+            "e/ou a instance role <budget>!VIEWER dos budgets personalizados, ou use uma "
+            "role com acesso (ex.: ACCOUNTADMIN) na conexão."
+        ),
+    },
+}
+
+
+def _budgets_unavailable_reason(err: str) -> str | None:
+    lower = err.lower()
+    if any(m in lower for m in _BUDGETS_PRIVILEGE_MARKERS):
+        return "privileges"
+    if any(m in lower for m in _BUDGETS_UNSUPPORTED_MARKERS):
+        return "unsupported"
+    return None
+
+
 def budgets(creds: dict) -> dict[str, Any]:
-    # Snowflake Budgets vary by version; try SHOW then degrade
+    # SHOW BUDGETS is rejected on most accounts ("Unsupported feature"); budgets are
+    # instances of the SNOWFLAKE.CORE.BUDGET class there.
     df, err = _run_show(creds, "SHOW BUDGETS")
+    if err and _budgets_unavailable_reason(err) == "unsupported":
+        df, err = _run_show(creds, "SHOW SNOWFLAKE.CORE.BUDGET INSTANCES IN ACCOUNT")
     if err:
+        reason = _budgets_unavailable_reason(err)
+        if reason:
+            return {
+                "items": [],
+                "supported": False,
+                "reason": reason,
+                **_BUDGETS_UNAVAILABLE[reason],
+                "detail": err,
+                "note": None,
+            }
         return {
             "items": [],
-            "note": (
-                "Budgets indisponíveis nesta conta/role (objeto Budgets ou privilégio ausente). "
-                f"Detalhe: {err}"
-            ),
+            "supported": True,
+            "note": f"Falha ao consultar Budgets. Detalhe: {err}",
         }
     if df is None or df.empty:
         return {
             "items": [],
+            "supported": True,
             "note": "Nenhum budget configurado nesta conta Snowflake.",
         }
     items = []
@@ -487,7 +542,7 @@ def budgets(creds: dict) -> dict[str, Any]:
                 "raw": {k: (str(v) if v is not None else None) for k, v in list(row.items())[:12]},
             }
         )
-    return {"items": items, "note": None}
+    return {"items": items, "supported": True, "note": None}
 
 
 _ORG_METERING_COLUMNS = [

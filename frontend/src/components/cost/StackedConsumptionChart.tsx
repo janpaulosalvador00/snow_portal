@@ -106,6 +106,8 @@ type Props = {
   onGrain: (g: string) => void;
   /** Chart toolbar left label (Snowflake: "View by Resource" / "View by Account"). */
   viewByLabel?: string;
+  /** Optional data-source note shown as an info icon next to the toolbar label. */
+  sourceHint?: { label: string; text: string } | null;
 };
 
 type TipProps = {
@@ -260,6 +262,7 @@ export function StackedConsumptionChart({
   grain,
   onGrain,
   viewByLabel = "View by Resource",
+  sourceHint = null,
 }: Props) {
   const [legendOpen, setLegendOpen] = useState(false);
   const [tipPos, setTipPos] = useState<{ x: number; y: number } | undefined>();
@@ -324,7 +327,20 @@ export function StackedConsumptionChart({
   return (
     <div className="chart-wrap cost-chart" ref={wrapRef}>
       <div className="chart-toolbar">
-        <div className="chart-toolbar-left muted">{viewByLabel}</div>
+        <div className="chart-toolbar-left muted">
+          {viewByLabel}
+          {sourceHint ? (
+            <span className="info-hint" tabIndex={0} aria-label={sourceHint.text}>
+              <span className="info-hint-icon" aria-hidden>
+                i
+              </span>
+              <span className="info-hint-label">{sourceHint.label}</span>
+              <span className="info-hint-pop" role="tooltip">
+                {sourceHint.text}
+              </span>
+            </span>
+          ) : null}
+        </div>
         <div className="chart-toolbar-right">
           <select
             className="chart-view-by"

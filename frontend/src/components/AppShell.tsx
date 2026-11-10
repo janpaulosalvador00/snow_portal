@@ -138,6 +138,15 @@ export function AppShell() {
             </NavIcon>
             Conexões
           </NavLink>
+          <NavLink to="/tokens">
+            <NavIcon>
+              <circle cx="7.5" cy="15.5" r="4.5" />
+              <path d="m10.7 12.3 8.8-8.8" />
+              <path d="m16 7 3 3" />
+              <path d="m18.5 4.5 2 2" />
+            </NavIcon>
+            Tokens
+          </NavLink>
           <NavLink to="/cost-management">
             <NavIcon>
               <path d="M4 19V5" />

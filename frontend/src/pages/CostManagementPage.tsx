@@ -54,6 +54,24 @@ const STACK_LABELS: Record<StackBy, { view: string; header: string }> = {
   account: { view: "View by Account", header: "ACCOUNT" },
 };
 
+/** Warehouse totals differ between these views because the Snowflake sources lag differently. */
+const WAREHOUSE_SOURCE_HINTS: Partial<Record<StackBy, { label: string; text: string }>> = {
+  resource: {
+    label: "ACCOUNT_USAGE",
+    text:
+      "Fonte: ACCOUNT_USAGE.METERING_HISTORY da conta conectada (atraso de até ~3h). " +
+      "A visão por conta usa ORGANIZATION_USAGE.METERING_DAILY_HISTORY, que pode atrasar " +
+      "24–72h — os totais de Warehouse podem diferir temporariamente entre as visões.",
+  },
+  account: {
+    label: "ORGANIZATION_USAGE",
+    text:
+      "Fonte: ORGANIZATION_USAGE.METERING_DAILY_HISTORY (consolidado diário da organização, " +
+      "atraso de 24–72h). A visão por recurso usa ACCOUNT_USAGE.METERING_HISTORY da conta " +
+      "conectada, mais recente — os totais de Warehouse podem diferir temporariamente.",
+  },
+};
+
 type OrgAccountsResp = {
   available: boolean;
   accounts: string[];
@@ -114,6 +132,12 @@ type MonitorsResp = {
 type BudgetsResp = {
   items: { name: string; raw: Record<string, string | null> }[];
   note: string | null;
+  /** `false` when Budgets is not enabled for the account or the role lacks privileges. */
+  supported?: boolean;
+  reason?: "unsupported" | "privileges";
+  message?: string;
+  help?: string;
+  detail?: string;
 };
 
 type OrgResp = {
@@ -704,6 +728,12 @@ export function CostManagementPage() {
                   grain={grain}
                   onGrain={setGrain}
                   viewByLabel={STACK_LABELS[stackBy].view}
+                  sourceHint={
+                    // Only when both views exist; without ORGANIZATION_USAGE there is nothing to compare.
+                    serviceType === DEFAULT_SERVICE_TYPE && !orgAccountsNote
+                      ? WAREHOUSE_SOURCE_HINTS[stackBy]
+                      : null
+                  }
                 />
               ) : (
                 <div className="info-box">Nenhum consumo no período.</div>
@@ -815,6 +845,23 @@ export function CostManagementPage() {
 
           {tab === "Budgets" && budgets ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
+              {budgets.supported === false ? (
+                <div className="cost-empty-state" role="status">
+                  <strong className="cost-empty-state-title">
+                    {budgets.reason === "privileges"
+                      ? "Sem acesso aos Budgets"
+                      : "Budgets não disponível nesta conta"}
+                  </strong>
+                  {budgets.message ? <p>{budgets.message}</p> : null}
+                  {budgets.help ? <p className="muted">{budgets.help}</p> : null}
+                  {budgets.detail ? (
+                    <details className="cost-empty-state-detail">
+                      <summary>Detalhe técnico</summary>
+                      <code>{budgets.detail}</code>
+                    </details>
+                  ) : null}
+                </div>
+              ) : null}
               {budgets.note ? <div className="info-box">{budgets.note}</div> : null}
               {budgets.items.length ? (
                 <div className="table cost-table">
@@ -829,7 +876,7 @@ export function CostManagementPage() {
                     </div>
                   ))}
                 </div>
-              ) : !budgets.note ? (
+              ) : !budgets.note && budgets.supported !== false ? (
                 <div className="info-box">Nenhum budget configurado nesta conta.</div>
               ) : null}
             </div>

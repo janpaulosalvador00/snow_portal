@@ -11,7 +11,6 @@ type Props = {
    * When omitted (Cost → Resource Monitors), options are derived from row account_name.
    */
   accountOptions?: string[];
-  onRefresh: () => void;
   loading?: boolean;
 };
 
@@ -19,7 +18,6 @@ export function MonitorsPanel({
   items,
   note,
   accountOptions,
-  onRefresh,
   loading,
 }: Props) {
   const [search, setSearch] = useState("");
@@ -99,7 +97,6 @@ export function MonitorsPanel({
         frequency={frequency}
         onFrequency={setFrequency}
         frequencies={frequencies}
-        onRefresh={onRefresh}
         loading={loading}
       />
       {filtered.length ? (

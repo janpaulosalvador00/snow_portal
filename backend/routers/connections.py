@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import logging
 import urllib.parse
+from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -11,9 +13,9 @@ from pydantic import BaseModel, Field
 
 from backend.lib import db
 from backend.lib import oauth_local
+from backend.lib import snowflake_cache as cache
 from backend.lib.snowflake_client import (
     discover_session_options,
-    discover_session_options_with_creds,
     test_connection,
 )
 from backend.security import get_current_user
@@ -65,6 +67,7 @@ class ConnectionCreate(BaseModel):
     warehouse: str | None = None
     role_name: str | None = None
     team_id: int | None = None
+    options: dict[str, Any] | None = None
 
 
 class ConnectionTest(BaseModel):
@@ -151,40 +154,83 @@ def test_conn(body: ConnectionTest, user: dict = Depends(get_current_user)):
     return {"ok": True, "message": msg}
 
 
-@router.get("/api/connections/{connection_id}/options")
-def connection_options(connection_id: int, user: dict = Depends(get_current_user)):
-    """List live warehouses and roles for a saved connection (ACL-gated).
+def _heal_warehouse(connection_id: int, options: dict) -> str | None:
+    """Persist the suggested warehouse when the stored one no longer exists.
 
-    When the stored warehouse no longer exists on the account, auto-persist the
-    suggested warehouse so Cost Management's pill does not keep a dead name
-    (e.g. COMPUTE_WH) until the user clicks Salvar.
+    Only call with fresh Snowflake data, never with a cached payload.
     """
+    if options.get("stored_warehouse_exists") is not False:
+        return None
+    suggested = (options.get("suggested_warehouse") or "").strip()
+    if not suggested:
+        return None
+    try:
+        db.update_connection(connection_id, warehouse=suggested)
+    except ValueError:
+        return None
+    options["stored_warehouse_exists"] = True
+    cache.store(
+        connection_id,
+        "options",
+        {},
+        {k: v for k, v in options.items() if k not in ("cached", "fetched_at")},
+    )
+    return suggested
+
+
+def _access_creds(user: dict, connection_id: int) -> dict:
     if not db.user_can_access_connection(user, connection_id):
         raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
     try:
-        creds = db.get_connection_credentials(connection_id)
+        return db.get_connection_credentials(connection_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/connections/{connection_id}/options")
+def connection_options(
+    connection_id: int,
+    refresh: bool = Query(False),
+    user: dict = Depends(get_current_user),
+):
+    """Warehouses and roles for a saved connection, from the Postgres cache.
+
+    Snowflake is queried only when nothing is cached or ``refresh=1``. A dead
+    stored warehouse is healed only from fresh data.
+    """
+    creds = _access_creds(user, connection_id)
     try:
-        options = discover_session_options_with_creds(creds)
+        options = cache.cached_fetch(
+            connection_id, "options", {}, creds=creds, force=refresh
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    warehouse_auto_saved: str | None = None
-    if options.get("stored_warehouse_exists") is False:
-        suggested = (options.get("suggested_warehouse") or "").strip()
-        if suggested:
-            try:
-                db.update_connection(connection_id, warehouse=suggested)
-                warehouse_auto_saved = suggested
-                # Reflect healed state for callers (Cost pill / edit form).
-                options["stored_warehouse_exists"] = True
-            except ValueError:
-                warehouse_auto_saved = None
-
+    warehouse_auto_saved = None if options.get("cached") else _heal_warehouse(connection_id, options)
     return {
         "ok": True,
         **options,
+        "warehouse_auto_saved": warehouse_auto_saved,
+    }
+
+
+@router.post("/api/connections/{connection_id}/refresh")
+def refresh_connection_data(connection_id: int, user: dict = Depends(get_current_user)):
+    """Re-query Snowflake for every screen/tab dataset of this connection and store it."""
+    creds = _access_creds(user, connection_id)
+    results = cache.refresh_connection(connection_id, creds)
+    warehouse_auto_saved = None
+    for entry in results:
+        payload = entry.pop("payload", None)
+        if payload is not None:
+            warehouse_auto_saved = _heal_warehouse(connection_id, payload)
+    failed = [r for r in results if not r["ok"]]
+    return {
+        "ok": not failed,
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        "total": len(results),
+        "failed": len(failed),
+        "results": results,
         "warehouse_auto_saved": warehouse_auto_saved,
     }
 
@@ -252,6 +298,17 @@ def create_connection(body: ConnectionCreate, user: dict = Depends(get_current_u
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if body.options:
+        try:
+            cache.store(
+                conn_id,
+                "options",
+                {},
+                {k: v for k, v in body.options.items() if k not in ("ok", "cached", "fetched_at")},
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("could not cache discover options for connection %s", conn_id)
 
     row = db.get_connection_by_id(conn_id)
     return {"ok": True, "message": msg, "connection": _serialize(row)}
@@ -327,6 +384,20 @@ def patch_connection(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    identity_changed = (
+        bool(body.secret)
+        or (
+            body.account_identifier is not None
+            and row["account_identifier"] != existing["account_identifier"]
+        )
+        or (body.username is not None and row["username"] != existing["username"])
+        or (row.get("auth_method") or "pat") != (existing.get("auth_method") or "pat")
+        # Role changes what ACCOUNT_USAGE / SHOW commands return.
+        or (row.get("role_name") or "") != (existing.get("role_name") or "")
+    )
+    if identity_changed:
+        db.delete_cache_for_connection(connection_id)
 
     return {"ok": True, "message": message, "connection": _serialize(row)}
 
@@ -477,6 +548,7 @@ def oauth_callback(
                 update_secret=True,
             )
             conn_id = int(existing_id)
+            db.delete_cache_for_connection(conn_id)
         else:
             conn_id = db.create_connection(
                 name=pending.get("name") or pending["account"],

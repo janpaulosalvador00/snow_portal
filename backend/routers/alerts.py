@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.lib import cost_queries, db
+from backend.lib import db, snowflake_cache
 from backend.security import get_current_user
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -25,8 +25,10 @@ def _disabled_client(connection: dict, detail: str) -> dict:
     }
 
 
-def _fetch_client(connection: dict, credentials: dict) -> dict:
-    payload = cost_queries.resource_monitors(credentials)
+def _fetch_client(connection: dict, credentials: dict, force: bool = False) -> dict:
+    payload = snowflake_cache.cached_fetch(
+        connection["id"], "resource_monitors", {}, creds=credentials, force=force
+    )
     monitors = payload.get("items") or []
     note = payload.get("note")
 
@@ -56,15 +58,18 @@ def _fetch_client(connection: dict, credentials: dict) -> dict:
         "note": note,
         "monitors": monitors,
         "max_quota_used_pct": max(percentages) if percentages else 0,
+        "fetched_at": payload.get("fetched_at"),
     }
 
 
 @router.get("")
 def alerts_resource_monitors(
     connection_id: list[int] | None = Query(None),
+    refresh_id: list[int] | None = Query(None),
     user: dict = Depends(get_current_user),
 ):
-    """Fetch accessible accounts independently so one failure never blocks the rest."""
+    """Serve each account from the cache; ``refresh_id`` forces Snowflake for those ids."""
+    force_ids = set(refresh_id or [])
     accessible = db.list_connections_for_user(user)
     if connection_id:
         requested = set(connection_id)
@@ -86,7 +91,9 @@ def alerts_resource_monitors(
     if jobs:
         with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as executor:
             futures = {
-                executor.submit(_fetch_client, connection, credentials): connection
+                executor.submit(
+                    _fetch_client, connection, credentials, connection["id"] in force_ids
+                ): connection
                 for connection, credentials in jobs
             }
             for future in as_completed(futures):

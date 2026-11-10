@@ -162,6 +162,97 @@ def ensure_schema() -> None:
             ON notification_deliveries(created_at)
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS snowflake_cache (
+                connection_id       INT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+                dataset             VARCHAR(64) NOT NULL,
+                params_key          TEXT NOT NULL DEFAULT '{}',
+                payload             JSONB NOT NULL,
+                fetched_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_accessed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (connection_id, dataset, params_key)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_snowflake_cache_accessed
+            ON snowflake_cache(connection_id, last_accessed_at)
+            """
+        )
+
+
+def get_cache(connection_id: int, dataset: str, params_key: str) -> dict | None:
+    """Return {payload, fetched_at} and bump last_accessed_at, or None."""
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE snowflake_cache
+            SET last_accessed_at = NOW()
+            WHERE connection_id = %s AND dataset = %s AND params_key = %s
+            RETURNING payload, fetched_at
+            """,
+            (connection_id, dataset, params_key),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return {"payload": payload, "fetched_at": row["fetched_at"]}
+
+
+def upsert_cache(connection_id: int, dataset: str, params_key: str, payload_json: str):
+    """Store a serialized payload; returns fetched_at."""
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO snowflake_cache
+                (connection_id, dataset, params_key, payload, fetched_at, last_accessed_at)
+            VALUES (%s, %s, %s, %s::jsonb, NOW(), NOW())
+            ON CONFLICT (connection_id, dataset, params_key) DO UPDATE
+            SET payload = EXCLUDED.payload,
+                fetched_at = NOW(),
+                last_accessed_at = NOW()
+            RETURNING fetched_at
+            """,
+            (connection_id, dataset, params_key, payload_json),
+        )
+        return cur.fetchone()["fetched_at"]
+
+
+def delete_cache_for_connection(connection_id: int) -> None:
+    with db_cursor(commit=True) as cur:
+        cur.execute("DELETE FROM snowflake_cache WHERE connection_id = %s", (connection_id,))
+
+
+def list_recent_cache_keys(connection_id: int, *, hours: int = 24) -> list[dict]:
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT dataset, params_key
+            FROM snowflake_cache
+            WHERE connection_id = %s
+              AND last_accessed_at >= NOW() - (%s || ' hours')::interval
+            """,
+            (connection_id, str(int(hours))),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def purge_stale_cache(connection_id: int, *, days: int = 7) -> int:
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            DELETE FROM snowflake_cache
+            WHERE connection_id = %s
+              AND last_accessed_at < NOW() - (%s || ' days')::interval
+            """,
+            (connection_id, str(int(days))),
+        )
+        return cur.rowcount
 
 
 def put_oauth_pending(state: str, payload: dict, *, ttl_sec: int = 600) -> None:

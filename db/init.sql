@@ -76,7 +76,19 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS snowflake_cache (
+    connection_id       INT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+    dataset             VARCHAR(64) NOT NULL,
+    params_key          TEXT NOT NULL DEFAULT '{}',
+    payload             JSONB NOT NULL,
+    fetched_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_accessed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (connection_id, dataset, params_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_oauth_pending_created ON oauth_pending(created_at);
+CREATE INDEX IF NOT EXISTS idx_snowflake_cache_accessed
+ON snowflake_cache(connection_id, last_accessed_at);
 CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);
 CREATE INDEX IF NOT EXISTS idx_connections_team ON connections(team_id);
 CREATE INDEX IF NOT EXISTS idx_connections_account ON connections(account_identifier);

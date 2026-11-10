@@ -21,6 +21,7 @@ export type AlertClient = {
   note: string | null;
   monitors: AlertMonitor[];
   max_quota_used_pct: number | null;
+  fetched_at?: string | null;
 };
 
 export type AlertsResponse = {
@@ -42,7 +43,7 @@ export function announceAlertsBadge(count: number) {
 }
 
 export async function getAlerts(
-  options: { force?: boolean; connectionIds?: number[] } = {},
+  options: { force?: boolean; connectionIds?: number[]; refreshIds?: number[] } = {},
 ): Promise<AlertsResponse> {
   const ids = options.connectionIds;
   const isFullRequest = !ids?.length;
@@ -50,9 +51,12 @@ export async function getAlerts(
   if (isFullRequest && !options.force && cached) return cached;
   if (isFullRequest && !options.force && pending) return pending;
 
-  const query = ids?.length
-    ? `?${ids.map((id) => `connection_id=${encodeURIComponent(id)}`).join("&")}`
-    : "";
+  // connection_id narrows the response; refresh_id forces Snowflake (otherwise Postgres cache).
+  const params = [
+    ...(ids || []).map((id) => `connection_id=${encodeURIComponent(id)}`),
+    ...(options.refreshIds || []).map((id) => `refresh_id=${encodeURIComponent(id)}`),
+  ];
+  const query = params.length ? `?${params.join("&")}` : "";
   const request = api<AlertsResponse>(`/api/alerts${query}`);
   if (isFullRequest) pending = request;
 

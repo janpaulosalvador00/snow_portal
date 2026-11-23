@@ -5,7 +5,7 @@ import json
 import logging
 import urllib.parse
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -238,6 +238,86 @@ def list_connections(
     ]
 
 
+class RefreshHistoryCreate(BaseModel):
+    """Record a successful refresh (connection or Global cycle). Append-only."""
+
+    connection_id: int | None = None
+    last_refresh_at: datetime | None = None
+    next_refresh_at: datetime | None = None
+    interval_minutes: int | None = None
+    scope: Literal["connection", "global"] = "connection"
+
+
+def _serialize_refresh_history(row: dict) -> dict:
+    def _iso(value):
+        return value.isoformat() if isinstance(value, datetime) else value
+
+    return {
+        "id": row["id"],
+        "connection_id": row.get("connection_id"),
+        "connection_name": row.get("connection_name"),
+        "user_id": row.get("user_id"),
+        "last_refresh_at": _iso(row.get("last_refresh_at")),
+        "next_refresh_at": _iso(row.get("next_refresh_at")),
+        "interval_minutes": row.get("interval_minutes"),
+        "scope": row.get("scope"),
+        "created_at": _iso(row.get("created_at")),
+    }
+
+
+@router.get("/api/connections/refresh-history")
+def list_refresh_history(
+    connection_id: int | None = Query(None),
+    scope: Literal["connection", "global"] | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    from_at: datetime | None = Query(None, alias="from"),
+    to_at: datetime | None = Query(None, alias="to"),
+    user: dict = Depends(get_current_user),
+):
+    """Append-only refresh history for the Histórico tab (ACL-filtered)."""
+    rows = db.list_connection_refresh_history(
+        user,
+        connection_id=connection_id,
+        scope=scope,
+        limit=limit,
+        from_at=from_at,
+        to_at=to_at,
+    )
+    return [_serialize_refresh_history(r) for r in rows]
+
+
+@router.post("/api/connections/refresh-history")
+def create_refresh_history(
+    body: RefreshHistoryCreate,
+    user: dict = Depends(get_current_user),
+):
+    """Persist one successful refresh event (connection or Global cycle)."""
+    if body.scope == "connection":
+        if body.connection_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="connection_id é obrigatório quando scope='connection'.",
+            )
+        if not db.user_can_access_connection(user, body.connection_id):
+            raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
+    elif body.connection_id is not None:
+        if not db.user_can_access_connection(user, body.connection_id):
+            raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
+
+    try:
+        row = db.insert_connection_refresh_history(
+            connection_id=body.connection_id,
+            user_id=user.get("id"),
+            last_refresh_at=body.last_refresh_at,
+            next_refresh_at=body.next_refresh_at,
+            interval_minutes=body.interval_minutes,
+            scope=body.scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **_serialize_refresh_history(row)}
+
+
 @router.post("/api/connections/test")
 def test_conn(body: ConnectionTest, user: dict = Depends(get_current_user)):
     method = _normalize_method(body.auth_method)
@@ -336,9 +416,23 @@ def refresh_connection_data(connection_id: int, user: dict = Depends(get_current
         if payload is not None:
             warehouse_auto_saved = _heal_warehouse(connection_id, payload)
     failed = [r for r in results if not r["ok"]]
+    refreshed_at = datetime.now(timezone.utc)
+    ok = not failed
+    if ok:
+        # Append-only history; failures must not block the refresh response.
+        interval = None
+        if row is not None:
+            interval = row.get("refresh_interval")
+        db.record_successful_connection_refresh(
+            connection_id,
+            user_id=user.get("id"),
+            last_refresh_at=refreshed_at,
+            interval_minutes=interval,
+            scope="connection",
+        )
     return {
-        "ok": not failed,
-        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        "ok": ok,
+        "refreshed_at": refreshed_at.isoformat(),
         "total": len(results),
         "failed": len(failed),
         "results": results,

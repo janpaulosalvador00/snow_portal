@@ -11,6 +11,7 @@ import {
   ConnectionEditModal,
   type Conn,
 } from "../components/ConnectionEditModal";
+import { RefreshHistoryPanel } from "../components/RefreshHistoryPanel";
 import { isConnectionInUse } from "../connections/lifecycle";
 import {
   connIntervalBadge,
@@ -21,6 +22,7 @@ import { GlobalRefreshBar } from "../refresh/GlobalRefreshBar";
 import { useRefresh } from "../refresh/RefreshContext";
 
 type Team = { id: number; name: string };
+type ConnectionsTab = "saved" | "history";
 
 const METHOD_LABELS: Record<string, string> = {
   browser_oauth: "Browser OAuth (como Cortex)",
@@ -46,6 +48,7 @@ export function ConnectionsPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [tab, setTab] = useState<ConnectionsTab>("saved");
 
   const { refreshToken, globalInterval, reloadSchedules } = useRefresh();
   const globalSeconds = Number(globalInterval);
@@ -223,11 +226,22 @@ export function ConnectionsPage() {
 
       <div className="tabs-row">
         <div className="tabs">
-          <button type="button" className="active">
+          <button
+            type="button"
+            className={tab === "saved" ? "active" : ""}
+            onClick={() => setTab("saved")}
+          >
             Contas salvas
           </button>
           <button type="button" className="" onClick={openCreate}>
             Sign in to Snowflake
+          </button>
+          <button
+            type="button"
+            className={tab === "history" ? "active" : ""}
+            onClick={() => setTab("history")}
+          >
+            Histórico
           </button>
         </div>
         <button type="button" className="btn primary" onClick={openCreate}>
@@ -235,7 +249,11 @@ export function ConnectionsPage() {
         </button>
       </div>
 
-      <GlobalRefreshBar />
+      {tab === "history" ? (
+        <RefreshHistoryPanel />
+      ) : (
+        <>
+          <GlobalRefreshBar />
 
       {!connections.length ? (
         <div className="info-box">
@@ -336,6 +354,8 @@ export function ConnectionsPage() {
             );
           })}
         </div>
+      )}
+        </>
       )}
 
       {creating ? (

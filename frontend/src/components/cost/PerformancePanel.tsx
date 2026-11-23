@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Bar,
   BarChart,
@@ -8,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { FilterPill } from "./FilterPill";
 
 export type PerformanceRec = {
   level: "ok" | "warn" | "bad" | "neutral" | string;
@@ -48,6 +50,13 @@ export type PerformanceResp = {
   duration_buckets?: { bucket: string; label: string; query_count: number }[];
 };
 
+const QUERY_LIMIT_OPTIONS = [
+  { value: "10", label: "10" },
+  { value: "20", label: "20" },
+  { value: "50", label: "50" },
+  { value: "all", label: "Todos" },
+] as const;
+
 function badgeClass(level: string): string {
   if (level === "ok") return "perf-badge ok";
   if (level === "warn") return "perf-badge warn";
@@ -61,6 +70,13 @@ function shortDate(iso: string): string {
   return iso;
 }
 
+function sliceQueries<T>(rows: T[], limit: string): T[] {
+  if (limit === "all") return rows;
+  const n = Number(limit);
+  if (!Number.isFinite(n) || n <= 0) return rows.slice(0, 10);
+  return rows.slice(0, n);
+}
+
 export function PerformancePanel({
   data,
   loading,
@@ -68,11 +84,14 @@ export function PerformancePanel({
   data: PerformanceResp;
   loading?: boolean;
 }) {
+  const [queryLimit, setQueryLimit] = useState("10");
   const chartRows = (data.load_series ?? []).map((r) => ({
     date: shortDate(r.date),
     running: r.avg_running,
     queued: r.avg_queued_load,
   }));
+  const allQueries = data.queries ?? [];
+  const visibleQueries = sliceQueries(allQueries, queryLimit);
 
   return (
     <div className={`cost-tab-body perf-panel${loading ? " is-refreshing" : ""}`}>
@@ -126,14 +145,12 @@ export function PerformancePanel({
             <div className="table cost-table perf-table">
               <div className="table-head">
                 <span>WAREHOUSE</span>
-                <span>SIZE</span>
                 <span>FILA</span>
                 <span>RECOMENDAÇÃO</span>
               </div>
               {data.warehouses.map((w) => (
                 <div key={w.warehouse_name} className="table-row">
                   <span>{w.warehouse_name}</span>
-                  <span className="muted">{w.size || "—"}</span>
                   <span>{w.queue_label}</span>
                   <span>
                     <span className={badgeClass(w.recommendation?.level)}>
@@ -153,10 +170,23 @@ export function PerformancePanel({
         Queries <small>lentas, repetidas e spill remoto</small>
       </h3>
       <div className="perf-card">
-        <h4>Top queries do período</h4>
-        <p className="muted perf-card-desc">
-          Fonte: ACCOUNT_USAGE.QUERY_HISTORY · agrupamento por query_hash quando repetida
-        </p>
+        <div className="perf-queries-header">
+          <div className="perf-queries-heading">
+            <h4>Top queries do período</h4>
+            <p className="muted perf-card-desc">
+              Fonte: ACCOUNT_USAGE.QUERY_HISTORY · agrupamento por query_hash quando repetida
+            </p>
+          </div>
+          {allQueries.length ? (
+            <FilterPill
+              label="Top"
+              value={queryLimit}
+              onChange={setQueryLimit}
+              options={[...QUERY_LIMIT_OPTIONS]}
+              disabled={loading}
+            />
+          ) : null}
+        </div>
         {data.duration_buckets && data.duration_buckets.some((b) => b.query_count > 0) ? (
           <div className="perf-buckets" aria-label="Distribuição por duração">
             {data.duration_buckets.map((b) => (
@@ -167,37 +197,39 @@ export function PerformancePanel({
             ))}
           </div>
         ) : null}
-        {data.queries?.length ? (
-          <div className="table cost-table perf-table perf-queries">
-            <div className="table-head">
-              <span>PADRÃO</span>
-              <span>WAREHOUSE</span>
-              <span>EXEC.</span>
-              <span>TEMPO</span>
-              <span>SPILL</span>
-              <span>RECOMENDAÇÃO</span>
-            </div>
-            {data.queries.map((q) => (
-              <div key={q.pattern_key || q.sample_query_id} className="table-row">
-                <span>
-                  <div className="perf-preview">{q.query_preview || "—"}</div>
-                  <div className="muted mono perf-meta">
-                    {(q.pattern_key || "").slice(0, 12)}
-                    {q.pattern_key && q.pattern_key.length > 12 ? "…" : ""}
-                    {q.user_name ? ` · ${q.user_name}` : ""}
-                  </div>
-                </span>
-                <span>{q.warehouse_name || "—"}</span>
-                <span>{q.executions}</span>
-                <span>{q.total_elapsed_label}</span>
-                <span>{q.spill_label}</span>
-                <span>
-                  <span className={badgeClass(q.recommendation?.level)}>
-                    {q.recommendation?.text || "—"}
-                  </span>
-                </span>
+        {allQueries.length ? (
+          <div className="perf-queries-scroll" role="region" aria-label="Top queries do período">
+            <div className="table cost-table perf-table perf-queries">
+              <div className="table-head">
+                <span>PADRÃO</span>
+                <span>WAREHOUSE</span>
+                <span>EXEC.</span>
+                <span>TEMPO</span>
+                <span>SPILL</span>
+                <span>RECOMENDAÇÃO</span>
               </div>
-            ))}
+              {visibleQueries.map((q) => (
+                <div key={q.pattern_key || q.sample_query_id} className="table-row">
+                  <span>
+                    <div className="perf-preview">{q.query_preview || "—"}</div>
+                    <div className="muted mono perf-meta">
+                      {(q.pattern_key || "").slice(0, 12)}
+                      {q.pattern_key && q.pattern_key.length > 12 ? "…" : ""}
+                      {q.user_name ? ` · ${q.user_name}` : ""}
+                    </div>
+                  </span>
+                  <span>{q.warehouse_name || "—"}</span>
+                  <span>{q.executions}</span>
+                  <span>{q.total_elapsed_label}</span>
+                  <span>{q.spill_label}</span>
+                  <span>
+                    <span className={badgeClass(q.recommendation?.level)}>
+                      {q.recommendation?.text || "—"}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <div className="info-box">Nenhuma query relevante no período.</div>

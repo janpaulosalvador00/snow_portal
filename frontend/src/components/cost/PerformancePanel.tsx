@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { FilterPill } from "./FilterPill";
 import { classifyQueryKind } from "./queryKind";
+import { ariaSort, levelRank, queueLabelRank, sortIndicator, toggleSort, type SortDir } from "./tableSort";
 
 export type PerformanceRec = {
   level: "ok" | "warn" | "bad" | "neutral" | string;
@@ -265,6 +266,86 @@ function sliceQueries<T>(rows: T[], limit: string): T[] {
   return rows.slice(0, n);
 }
 
+type WarehouseRow = PerformanceResp["warehouses"][number];
+type QueryRow = PerformanceResp["queries"][number];
+
+/** "Diagnóstico por warehouse" sortable columns. */
+type WhSortKey = "warehouse" | "fila" | "status";
+
+const WH_COLUMNS: { key: WhSortKey; label: string }[] = [
+  { key: "warehouse", label: "WAREHOUSE" },
+  { key: "fila", label: "FILA" },
+  { key: "status", label: "STATUS" },
+];
+
+/** FILA and STATUS default to worst-first (desc); WAREHOUSE defaults to A→Z. */
+function whDefaultDir(key: WhSortKey): SortDir {
+  return key === "warehouse" ? 1 : -1;
+}
+
+function compareWarehouses(a: WarehouseRow, b: WarehouseRow, key: WhSortKey, dir: SortDir): number {
+  const mul = dir;
+  switch (key) {
+    case "warehouse":
+      return mul * a.warehouse_name.localeCompare(b.warehouse_name);
+    case "fila": {
+      // Prefer the numeric mean_queued (more precise); fall back to the
+      // baixa/média/alta label rank if it's ever missing.
+      const av = Number.isFinite(a.mean_queued) ? a.mean_queued : queueLabelRank(a.queue_label);
+      const bv = Number.isFinite(b.mean_queued) ? b.mean_queued : queueLabelRank(b.queue_label);
+      return mul * (av - bv);
+    }
+    case "status":
+      return mul * (levelRank(a.recommendation?.level) - levelRank(b.recommendation?.level));
+    default:
+      return 0;
+  }
+}
+
+/** "Top queries do período" sortable columns (TIPO stays unsorted). */
+type QuerySortKey = "query" | "warehouse" | "exec" | "tempo" | "datetime" | "sinal";
+
+const QUERY_COLUMNS: { key: QuerySortKey; label: string; numeric?: boolean }[] = [
+  { key: "query", label: "QUERY" },
+  { key: "warehouse", label: "WAREHOUSE" },
+  { key: "exec", label: "EXEC.", numeric: true },
+  { key: "tempo", label: "TEMPO", numeric: true },
+  { key: "datetime", label: "DATA/HORA", numeric: true },
+  { key: "sinal", label: "SINAL" },
+];
+
+/** EXEC./TEMPO/SINAL default to highest/worst-first (desc); the rest default ascending. */
+function queryDefaultDir(key: QuerySortKey): SortDir {
+  return key === "exec" || key === "tempo" || key === "sinal" ? -1 : 1;
+}
+
+function compareQueries(a: QueryRow, b: QueryRow, key: QuerySortKey, dir: SortDir): number {
+  const mul = dir;
+  switch (key) {
+    case "query":
+      return mul * (a.query_preview || "").localeCompare(b.query_preview || "");
+    case "warehouse":
+      return mul * (a.warehouse_name || "").localeCompare(b.warehouse_name || "");
+    case "exec":
+      return mul * ((a.executions ?? 0) - (b.executions ?? 0));
+    case "tempo":
+      return mul * ((a.total_elapsed_ms ?? 0) - (b.total_elapsed_ms ?? 0));
+    case "datetime": {
+      // Rows without a last execution (display "—") sort to the start of
+      // the ascending order.
+      const at = a.last_end_time ? new Date(a.last_end_time).getTime() : 0;
+      const bt = b.last_end_time ? new Date(b.last_end_time).getTime() : 0;
+      const av = Number.isFinite(at) ? at : 0;
+      const bv = Number.isFinite(bt) ? bt : 0;
+      return mul * (av - bv);
+    }
+    case "sinal":
+      return mul * (levelRank(a.recommendation?.level) - levelRank(b.recommendation?.level));
+    default:
+      return 0;
+  }
+}
+
 export function PerformancePanel({
   data,
   loading,
@@ -280,7 +361,31 @@ export function PerformancePanel({
     queued: r.avg_queued_load,
   }));
   const allQueries = data.queries ?? [];
-  const visibleQueries = sliceQueries(allQueries, queryLimit);
+
+  // Diagnóstico por warehouse: default matches the API's own worst-queue-first order.
+  const [whSortKey, setWhSortKey] = useState<WhSortKey>("fila");
+  const [whSortDir, setWhSortDir] = useState<SortDir>(-1);
+  function toggleWhSort(key: WhSortKey) {
+    toggleSort(key, whSortKey, setWhSortKey, setWhSortDir, whDefaultDir);
+  }
+  const sortedWarehouses = useMemo(() => {
+    const copy = [...(data.warehouses ?? [])];
+    copy.sort((a, b) => compareWarehouses(a, b, whSortKey, whSortDir));
+    return copy;
+  }, [data.warehouses, whSortKey, whSortDir]);
+
+  // Top queries do período: default matches the API's own slowest-first order.
+  const [querySortKey, setQuerySortKey] = useState<QuerySortKey>("tempo");
+  const [querySortDir, setQuerySortDir] = useState<SortDir>(-1);
+  function toggleQuerySort(key: QuerySortKey) {
+    toggleSort(key, querySortKey, setQuerySortKey, setQuerySortDir, queryDefaultDir);
+  }
+  const sortedQueries = useMemo(() => {
+    const copy = [...allQueries];
+    copy.sort((a, b) => compareQueries(a, b, querySortKey, querySortDir));
+    return copy;
+  }, [allQueries, querySortKey, querySortDir]);
+  const visibleQueries = sliceQueries(sortedQueries, queryLimit);
 
   return (
     <div className={`cost-tab-body perf-panel${loading ? " is-refreshing" : ""}`}>
@@ -335,12 +440,26 @@ export function PerformancePanel({
                   : "table cost-table perf-table perf-wh-table"
               }
             >
-              <div className="table-head">
-                <span>WAREHOUSE</span>
-                <span>FILA</span>
-                <span>STATUS</span>
+              <div className="table-head" role="row">
+                {WH_COLUMNS.map((col) => {
+                  const active = whSortKey === col.key;
+                  return (
+                    <button
+                      key={col.key}
+                      type="button"
+                      className={`perf-th${active ? " is-sorted" : ""}`}
+                      onClick={() => toggleWhSort(col.key)}
+                      aria-sort={ariaSort(active, whSortDir)}
+                    >
+                      <span>{col.label}</span>
+                      <span className="perf-sort-ind" aria-hidden="true">
+                        {sortIndicator(active, whSortDir)}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-              {data.warehouses.map((w) => (
+              {sortedWarehouses.map((w) => (
                 <div key={w.warehouse_name} className="table-row">
                   <span className="perf-wh-name" title={w.warehouse_name}>
                     {w.warehouse_name}
@@ -396,14 +515,25 @@ export function PerformancePanel({
         {allQueries.length ? (
           <div className="perf-queries-scroll" role="region" aria-label="Top queries do período">
             <div className="table cost-table perf-table perf-queries">
-              <div className="table-head">
+              <div className="table-head" role="row">
                 <span>TIPO</span>
-                <span>QUERY</span>
-                <span>WAREHOUSE</span>
-                <span className="perf-num">EXEC.</span>
-                <span className="perf-num">TEMPO</span>
-                <span className="perf-num">DATA/HORA</span>
-                <span>SINAL</span>
+                {QUERY_COLUMNS.map((col) => {
+                  const active = querySortKey === col.key;
+                  return (
+                    <button
+                      key={col.key}
+                      type="button"
+                      className={`perf-th${col.numeric ? " perf-num" : ""}${active ? " is-sorted" : ""}`}
+                      onClick={() => toggleQuerySort(col.key)}
+                      aria-sort={ariaSort(active, querySortDir)}
+                    >
+                      <span>{col.label}</span>
+                      <span className="perf-sort-ind" aria-hidden="true">
+                        {sortIndicator(active, querySortDir)}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
               {visibleQueries.map((q) => {
                 const signal = querySignal(q.recommendation);

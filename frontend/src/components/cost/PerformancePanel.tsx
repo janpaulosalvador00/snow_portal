@@ -403,26 +403,28 @@ export function PerformancePanel({
             </p>
             <FetchedAtLabel fetchedAt={data.fetched_at} cached={data.cached} />
           </div>
-          {allQueries.length ? (
-            <FilterPill
-              label="Top"
-              value={queryLimit}
-              onChange={setQueryLimit}
-              options={[...QUERY_LIMIT_OPTIONS]}
-              disabled={loading}
-            />
-          ) : null}
-        </div>
-        {data.duration_buckets && data.duration_buckets.some((b) => b.query_count > 0) ? (
-          <div className="perf-buckets" aria-label="Distribuição por duração">
-            {data.duration_buckets.map((b) => (
-              <div key={b.bucket} className="perf-bucket">
-                <span className="muted">{b.label}</span>
-                <strong>{b.query_count}</strong>
+          <div className="perf-queries-header-right">
+            {data.duration_buckets && data.duration_buckets.some((b) => b.query_count > 0) ? (
+              <div className="perf-buckets" aria-label="Distribuição por duração">
+                {data.duration_buckets.map((b) => (
+                  <div key={b.bucket} className="perf-bucket">
+                    <span className="muted">{b.label}</span>
+                    <strong>{b.query_count.toLocaleString("pt-BR")}</strong>
+                  </div>
+                ))}
               </div>
-            ))}
+            ) : null}
+            {allQueries.length ? (
+              <FilterPill
+                label="Top"
+                value={queryLimit}
+                onChange={setQueryLimit}
+                options={[...QUERY_LIMIT_OPTIONS]}
+                disabled={loading}
+              />
+            ) : null}
           </div>
-        ) : null}
+        </div>
         {allQueries.length ? (
           <div className="perf-queries-scroll" role="region" aria-label="Top queries do período">
             <div className="table cost-table perf-table perf-queries">

@@ -11,6 +11,10 @@ import { CostSkeleton } from "../components/cost/CostChrome";
 import { ErrorBanner } from "../components/cost/ErrorBanner";
 import { MonitorsPanel } from "../components/cost/MonitorsPanel";
 import type { Monitor } from "../components/cost/MonitorsTable";
+import {
+  isConnectionInUse,
+  operationalConnections,
+} from "../connections/lifecycle";
 import { useRefresh } from "../refresh/RefreshContext";
 
 type Conn = {
@@ -19,6 +23,8 @@ type Conn = {
   account_identifier: string;
   warehouse?: string | null;
   role_name?: string | null;
+  /** Durable lifecycle — false = archived / no longer used. */
+  is_active?: boolean | null;
 };
 
 type MonitorsResp = {
@@ -48,15 +54,15 @@ export function HubPage() {
   useEffect(() => {
     void api<Conn[]>("/api/connections")
       .then((list) => {
-        setConnections(list);
+        // Environment switch: only in-use connections (archived are not selectable).
+        const usable = operationalConnections(list);
+        setConnections(usable);
         const stored = getActiveConnectionId();
-        if (stored && list.some((c) => c.id === stored)) {
+        if (stored && usable.some((c) => c.id === stored)) {
           setActiveId(stored);
-        } else if (stored && !list.some((c) => c.id === stored)) {
-          setActiveConnectionId(null);
-          setActiveId(null);
         } else {
-          setActiveId(stored);
+          if (stored) setActiveConnectionId(null);
+          setActiveId(null);
         }
       })
       .catch(() => setConnections([]));
@@ -150,7 +156,12 @@ export function HubPage() {
       return;
     }
     const id = Number(value);
-    if (!Number.isFinite(id) || !connections.some((c) => c.id === id)) return;
+    if (
+      !Number.isFinite(id) ||
+      !connections.some((c) => c.id === id && isConnectionInUse(c))
+    ) {
+      return;
+    }
     setActiveConnectionId(id);
     setActiveId(id);
   }

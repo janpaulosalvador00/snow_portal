@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, ApiError } from "../api/client";
+import { operationalConnections } from "../connections/lifecycle";
 import {
   CONNECTIONS_GLOBAL_INTERVAL_KEY,
   CONNECTIONS_LAST_REFRESHED_KEY,
@@ -25,15 +26,15 @@ type RefreshResult = {
   warehouse_auto_saved: string | null;
 };
 
-type ConnRow = { id: number; refresh_interval?: number | null };
+type ConnRow = { id: number; refresh_interval?: number | null; is_active?: boolean | null };
 
 type RefreshProgress = { done: number; total: number } | null;
 
 type RefreshContextValue = {
   /**
-   * Without connectionId: refresh every connection the user can see.
+   * Without connectionId: refresh every in-use connection the user can see.
    * With connectionId: refresh only that connection (e.g. Alerts per-card).
-   * With number[]: refresh those connections.
+   * With number[]: refresh those connections (inactive ids are dropped).
    */
   refreshAll: (connectionId?: number | number[]) => Promise<void>;
   /** Bumps after each global refresh; pages add it to their load effects. */
@@ -115,7 +116,8 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     void api<ConnRow[]>("/api/connections")
       .then((list) => {
-        if (!cancelled) setSchedules(list);
+        // Auto-refresh schedules: never include archived (is_active=false) connections.
+        if (!cancelled) setSchedules(operationalConnections(list));
       })
       .catch(() => {
         if (!cancelled) setSchedules([]);
@@ -143,13 +145,15 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const list =
+        // Resolve against a live catalog so archived connections never refresh,
+        // including when callers pass an explicit id list (Global cohort timers).
+        const catalog = operationalConnections(await api<ConnRow[]>("/api/connections"));
+        const activeIds = new Set(catalog.map((c) => c.id));
+        const ids = (
           Array.isArray(connectionId) && connectionId.length
-            ? connectionId.map((id) => ({ id }))
-            : await api<ConnRow[]>("/api/connections");
-        const ids = (Array.isArray(connectionId) ? connectionId : list.map((c) => c.id)).filter(
-          (id) => Number.isFinite(id),
-        );
+            ? connectionId.filter((id) => activeIds.has(id))
+            : catalog.map((c) => c.id)
+        ).filter((id) => Number.isFinite(id));
         if (ids.length === 0) {
           setLastRefreshedAt(new Date().toISOString());
           return;
@@ -227,6 +231,7 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
 
   // Auto-refresh: per-connection minutes, or Contas salvas global for NULL intervals.
   // null = Global cohort; 0 = Desligada (never schedule, even if Global is on); 1..60 = own timer.
+  // schedules already excludes is_active=false.
   useEffect(() => {
     if (!schedules.length) return;
     const timers: number[] = [];

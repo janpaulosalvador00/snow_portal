@@ -54,7 +54,7 @@ export function CostTabs({ tab, onTab }: Pick<Props, "tab" | "onTab">) {
   );
 }
 
-/** Format cache/API `fetched_at` as pt-BR "dd/mm/aaaa, hh:mm". */
+/** Format API `fetched_at` as pt-BR "dd/mm/aaaa, hh:mm". */
 function formatUpdatedAt(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -72,15 +72,13 @@ export function CostPageHeader({
   contextLabel,
   creditsUsed,
   updatedAt,
-  updatedCached,
   actions,
 }: {
   contextLabel?: string | null;
   /** When set, shows e.g. "16.0 credits used" before the warehouse pill. */
   creditsUsed?: number | null;
-  /** Cache/API snapshot time — shown left of the warehouse pill. */
+  /** Backend `fetched_at` — last real data refresh, left of the warehouse pill. */
   updatedAt?: string | null;
-  updatedCached?: boolean;
   actions?: ReactNode;
 }) {
   const updatedLabel = formatUpdatedAt(updatedAt);
@@ -97,11 +95,10 @@ export function CostPageHeader({
         {updatedLabel ? (
           <span
             className="cost-header-updated muted"
-            title={updatedCached ? "Snapshot em cache" : "Atualizado agora"}
+            title={updatedAt ?? undefined}
             aria-live="polite"
           >
             Atualizado · {updatedLabel}
-            {updatedCached ? " (cache)" : ""}
           </span>
         ) : null}
         {contextLabel ? (

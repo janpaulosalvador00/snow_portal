@@ -994,11 +994,6 @@ select:focus {
   width: 100%;
 }
 
-.cost-table-org .table-head,
-.cost-table-org .table-row {
-  grid-template-columns: 1fr 1.4fr 0.6fr;
-}
-
 .filter-pill {
   display: inline-flex;
   flex-direction: row;

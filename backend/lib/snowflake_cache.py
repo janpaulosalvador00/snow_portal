@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from fastapi.encoders import jsonable_encoder
 
-from backend.lib import cost_queries, db
+from backend.lib import cost_queries, db, performance_queries
 from backend.lib.snowflake_client import discover_session_options_with_creds
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,28 @@ def _fetch_org_consumption(creds: dict, params: dict) -> dict:
     )
 
 
+def _fetch_performance(creds: dict, params: dict) -> dict:
+    return performance_queries.performance(
+        creds,
+        warehouse=params.get("warehouse"),
+        **_window(params),
+    )
+
+
+def performance_params(
+    *,
+    days: int,
+    start_date: str | None,
+    end_date: str | None,
+    warehouse: str | None = None,
+) -> dict:
+    wh = (warehouse or "").strip()
+    return {
+        **window_params(days, start_date, end_date),
+        "warehouse": None if not wh or wh.upper() == "ALL" else wh,
+    }
+
+
 DATASETS: dict[str, Fetcher] = {
     "options": lambda creds, _p: discover_session_options_with_creds(creds),
     "connection_account": lambda creds, _p: cost_queries.connection_account(creds),
@@ -71,6 +93,7 @@ DATASETS: dict[str, Fetcher] = {
     ),
     "resource_monitors": lambda creds, _p: cost_queries.resource_monitors(creds),
     "budgets": lambda creds, _p: cost_queries.budgets(creds),
+    "performance": lambda creds, p: _fetch_performance(creds, p),
 }
 
 
@@ -146,6 +169,7 @@ _WINDOWED_DATASETS = {
     "account_overview",
     "anomalies",
     "organization_overview",
+    "performance",
 }
 _LIVE_WINDOW_DAYS = 2
 _LIVE_TTL = timedelta(hours=1)
@@ -245,6 +269,7 @@ def default_jobs(today: date | None = None) -> list[tuple[str, dict]]:
         ("account_overview", win7),
         ("anomalies", win7),
         ("organization_overview", win7),
+        ("performance", performance_params(days=7, start_date=start7, end_date=end)),
     ]
 
 

@@ -130,6 +130,31 @@ def cost_anomalies(
     )
 
 
+@router.get("/performance")
+def cost_performance(
+    connection_id: int = Query(...),
+    days: int = Query(7, ge=1, le=365),
+    start_date: str | None = Query(None, description="YYYY-MM-DD (UTC)"),
+    end_date: str | None = Query(None, description="YYYY-MM-DD (UTC)"),
+    warehouse: str | None = Query(None, description="Warehouse name or All"),
+    user: dict = Depends(get_current_user),
+):
+    """Warehouse load + query hotspots with read-only recommendations."""
+    creds = _creds(user, connection_id)
+    _check_window(start_date, end_date)
+    return _cached(
+        connection_id,
+        creds,
+        "performance",
+        cache.performance_params(
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+            warehouse=warehouse,
+        ),
+    )
+
+
 @router.get("/resource-monitors")
 def cost_resource_monitors(
     connection_id: int = Query(...),

@@ -20,6 +20,10 @@ import { DateRangePicker, type DateRangeValue } from "../components/cost/DateRan
 import { ErrorBanner } from "../components/cost/ErrorBanner";
 import { FilterPill, type FilterPillOption } from "../components/cost/FilterPill";
 import { MonitorsPanel } from "../components/cost/MonitorsPanel";
+import {
+  PerformancePanel,
+  type PerformanceResp,
+} from "../components/cost/PerformancePanel";
 import { StackedConsumptionChart } from "../components/cost/StackedConsumptionChart";
 import { useRefresh } from "../refresh/RefreshContext";
 import { RefreshIconButton } from "../refresh/RefreshIconButton";
@@ -231,6 +235,8 @@ export function CostManagementPage() {
   const [dataWindow, setDataWindow] = useState<{ start: string; end: string } | null>(null);
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [anom, setAnom] = useState<AnomaliesResp | null>(null);
+  const [perf, setPerf] = useState<PerformanceResp | null>(null);
+  const [perfWarehouse, setPerfWarehouse] = useState("All");
   const [monitors, setMonitors] = useState<MonitorsResp | null>(null);
   const [budgets, setBudgets] = useState<BudgetsResp | null>(null);
   const [org, setOrg] = useState<OrgResp | null>(null);
@@ -511,6 +517,25 @@ export function CostManagementPage() {
         const res = await api<AnomaliesResp>(`/api/cost/anomalies?${qs}`, { signal });
         if (signal.aborted) return;
         setAnom(res);
+      } else if (tab === "Performance") {
+        const perfQs = new URLSearchParams(qs);
+        if (perfWarehouse && perfWarehouse !== "All") {
+          perfQs.set("warehouse", perfWarehouse);
+        }
+        const res = await api<PerformanceResp>(`/api/cost/performance?${perfQs}`, {
+          signal,
+        });
+        if (signal.aborted) return;
+        setPerf(res);
+        // Keep the selected warehouse if still present; otherwise reset to All.
+        const opts = res.warehouse_options ?? [];
+        if (
+          perfWarehouse !== "All" &&
+          opts.length > 0 &&
+          !opts.some((n) => n.toUpperCase() === perfWarehouse.toUpperCase())
+        ) {
+          setPerfWarehouse("All");
+        }
       } else if (tab === "Resource Monitors") {
         const res = await api<MonitorsResp>(
           `/api/cost/resource-monitors?connection_id=${id}`,
@@ -536,6 +561,7 @@ export function CostManagementPage() {
       setData(null);
       setOverview(null);
       setAnom(null);
+      setPerf(null);
       setMonitors(null);
       setBudgets(null);
       setOrg(null);
@@ -563,18 +589,32 @@ export function CostManagementPage() {
       loadAbortRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId, tab, dateKey, usageType, serviceType, accountFilter, refreshToken]);
+  }, [
+    connectionId,
+    tab,
+    dateKey,
+    usageType,
+    serviceType,
+    accountFilter,
+    perfWarehouse,
+    refreshToken,
+  ]);
 
   // Changing Service Type invalidates resource picks from other service types.
   useEffect(() => {
     setResourceFilter("All");
   }, [serviceType]);
 
+  useEffect(() => {
+    setPerfWarehouse("All");
+  }, [connectionId]);
+
   const activeConn = connections.find((c) => c.id === connectionId);
   const hasTabData =
     (tab === "Consumption" && !!data) ||
     (tab === "Account Overview" && !!overview) ||
     (tab === "Anomalies" && !!anom) ||
+    (tab === "Performance" && !!perf) ||
     (tab === "Resource Monitors" && !!monitors) ||
     (tab === "Budgets" && !!budgets) ||
     (tab === "Organization Overview" && !!org);
@@ -655,6 +695,7 @@ export function CostManagementPage() {
   const showTimeNonConsumption =
     tab === "Account Overview" ||
     tab === "Anomalies" ||
+    tab === "Performance" ||
     tab === "Organization Overview";
 
   const relatedInfo = connAccount?.connId === connectionId ? connAccount.info : null;
@@ -875,6 +916,20 @@ export function CostManagementPage() {
                 />
               </>
             ) : null}
+            {tab === "Performance" ? (
+              <FilterPill
+                label="Warehouse"
+                value={perfWarehouse}
+                onChange={setPerfWarehouse}
+                options={[
+                  { value: "All", label: "All Warehouses" },
+                  ...(perf?.warehouse_options ?? []).map((n) => ({
+                    value: n,
+                    label: n,
+                  })),
+                ]}
+              />
+            ) : null}
             {tab !== "Resource Monitors" ? (
               <RefreshIconButton disabled={loading} />
             ) : null}
@@ -1000,6 +1055,10 @@ export function CostManagementPage() {
                 </div>
               ) : null}
             </div>
+          ) : null}
+
+          {tab === "Performance" && perf ? (
+            <PerformancePanel data={perf} loading={loading} />
           ) : null}
 
           {tab === "Resource Monitors" && monitors ? (

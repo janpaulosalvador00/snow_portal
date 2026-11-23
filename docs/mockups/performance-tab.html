@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mockup — Aba Performance (Cost Management)</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #161a20;
+      --border: #2a2f36;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #29b5e8;
+      --ok: #3dd68c;
+      --warn: #f5a524;
+      --bad: #f07178;
+      --chip: #1c222b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      min-height: 100vh;
+      display: flex;
+    }
+    .banner {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 50;
+      background: #1a2740;
+      border-bottom: 1px solid var(--accent);
+      color: var(--text);
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+    .banner strong { color: var(--accent); }
+    .shell { display: flex; width: 100%; margin-top: 40px; min-height: calc(100vh - 40px); }
+    aside {
+      width: 200px;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      background: #0c0e12;
+      padding: 20px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .brand { font-weight: 700; letter-spacing: 0.02em; margin: 0 8px 18px; }
+    .nav {
+      display: block;
+      padding: 8px 10px;
+      border-radius: 8px;
+      color: var(--muted);
+      text-decoration: none;
+    }
+    .nav.active { background: #132033; color: var(--accent); border-left: 3px solid var(--accent); }
+    main { flex: 1; padding: 20px 24px 48px; overflow: auto; }
+    h1 { margin: 0 0 4px; font-size: 22px; font-weight: 650; }
+    .sub { color: var(--muted); margin-bottom: 16px; font-size: 13px; }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 14px;
+    }
+    .tab {
+      padding: 10px 12px;
+      color: var(--muted);
+      border-bottom: 2px solid transparent;
+      cursor: default;
+      font-size: 13px;
+    }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .pill {
+      background: var(--chip);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      color: var(--text);
+    }
+    .pill span { color: var(--muted); margin-right: 6px; }
+    .hint {
+      border-left: 3px solid var(--accent);
+      background: #121820;
+      padding: 10px 12px;
+      border-radius: 0 8px 8px 0;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 18px;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 980px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      aside { display: none; }
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .card h2 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .card .desc { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+    .chart {
+      height: 180px;
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      padding: 8px 4px 0;
+      border-top: 1px solid var(--border);
+    }
+    .bar-group { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .bars { width: 100%; display: flex; align-items: flex-end; gap: 3px; height: 140px; }
+    .b { width: 45%; border-radius: 4px 4px 0 0; }
+    .b.run { background: var(--accent); opacity: 0.85; }
+    .b.queue { background: var(--warn); opacity: 0.9; }
+    .bar-label { font-size: 10px; color: var(--muted); }
+    .legend { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--muted); }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .badge.ok { color: var(--ok); border-color: #2a5a40; background: #122018; }
+    .badge.warn { color: var(--warn); border-color: #5a4520; background: #221a10; }
+    .badge.bad { color: var(--bad); border-color: #5a3038; background: #201216; }
+    .badge.neutral { color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+    .section-title {
+      margin: 8px 0 10px;
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .section-title small { color: var(--muted); font-weight: 400; font-size: 12px; }
+    .note {
+      margin-top: 16px;
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <strong>Mockup estático</strong> — proposta da aba <strong>Performance</strong> dentro de Cost Management (somente leitura). Não é a aplicação real.
+  </div>
+  <div class="shell">
+    <aside>
+      <div class="brand">Snow Portal</div>
+      <a class="nav" href="#">Início</a>
+      <a class="nav" href="#">Conexões</a>
+      <a class="nav" href="#">Tokens</a>
+      <a class="nav active" href="#">Cost Management</a>
+      <a class="nav" href="#">Alerts</a>
+      <a class="nav" href="#">Administração</a>
+    </aside>
+    <main>
+      <h1>Cost Management</h1>
+      <p class="sub">Mockup · Iguatemi-prd · conta QM53146 · Last 7 days</p>
+
+      <div class="tabs">
+        <div class="tab">Organization Overview</div>
+        <div class="tab">Account Overview</div>
+        <div class="tab">Consumption</div>
+        <div class="tab">Anomalies</div>
+        <div class="tab active">Performance</div>
+        <div class="tab">Budgets</div>
+        <div class="tab">Resource Monitors</div>
+      </div>
+
+      <div class="filters">
+        <div class="pill"><span>Período</span>Last 7 days</div>
+        <div class="pill"><span>Conexão</span>Iguatemi-prd</div>
+        <div class="pill"><span>Conta</span>QM53146</div>
+        <div class="pill"><span>Warehouse</span>All Warehouses</div>
+        <div class="pill" style="opacity:0.7">↻ Atualizar</div>
+      </div>
+
+      <div class="hint">
+        Dados de ACCOUNT_USAGE podem atrasar (queries até ~45 min; carga de warehouse até ~3 h).
+        Recomendações são somente leitura — o portal não altera warehouses no Snowflake.
+      </div>
+
+      <div class="section-title">Warehouses <small>carga, fila e sugestões</small></div>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Carga e fila (por dia)</h2>
+          <p class="desc">Running = queries em execução · Queued = fila por sobrecarga</p>
+          <div class="chart" aria-hidden="true">
+            <div class="bar-group">
+              <div class="bars">
+                <div class="b run" style="height:42%"></div>
+                <div class="b queue" style="height:8%"></div>
+              </div>
+              <div class="bar-label">04</div>
+            </div>
+            <div class="bar-group">
+              <div class="bars">
+                <div class="b run" style="height:55%"></div>
+                <div class="b queue" style="height:18%"></div>
+              </div>
+              <div class="bar-label">05</div>
+            </div>
+            <div class="bar-group">
+              <div class="bars">
+                <div class="b run" style="height:38%"></div>
+                <div class="b queue" style="height:4%"></div>
+              </div>
+              <div class="bar-label">06</div>
+            </div>
+            <div class="bar-group">
+              <div class="bars">
+                <div class="b run" style="height:22%"></div>
+                <div class="b queue" style="height:2%"></div>
+              </div>
+              <div class="bar-label">07</div>
+            </div>
+            <div class="bar-group">
+              <div class="bars">
+                <div class="b run" style="height:28%"></div>
+                <div class="b queue" style="height:3%"></div>
+              </div>
+              <div class="bar-label">08</div>
+            </div>
+            <div class="bar-group">
+              <div class="bars">
+                <div class="b run" style="height:70%"></div>
+                <div class="b queue" style="height:35%"></div>
+              </div>
+              <div class="bar-label">09</div>
+            </div>
+            <div class="bar-group">
+              <div class="bars">
+                <div class="b run" style="height:48%"></div>
+                <div class="b queue" style="height:12%"></div>
+              </div>
+              <div class="bar-label">10</div>
+            </div>
+          </div>
+          <div class="legend">
+            <span><i class="dot" style="background:var(--accent)"></i>Running</span>
+            <span><i class="dot" style="background:var(--warn)"></i>Queued</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Diagnóstico por warehouse</h2>
+          <p class="desc">Regras baseadas em WAREHOUSE_LOAD_HISTORY (docs Snowflake)</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Warehouse</th>
+                <th>Size</th>
+                <th>Fila</th>
+                <th>Recomendação</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>COMPUTE_WH</td>
+                <td>Medium</td>
+                <td>alta</td>
+                <td><span class="badge warn">Considerar aumentar ou multi-cluster</span></td>
+              </tr>
+              <tr>
+                <td>AI_LEITOR_MATRICULA</td>
+                <td>X-Small</td>
+                <td>baixa</td>
+                <td><span class="badge ok">Carga baixa — candidato a reduzir</span></td>
+              </tr>
+              <tr>
+                <td>WH_TRANSFORM</td>
+                <td>Large</td>
+                <td>média</td>
+                <td><span class="badge neutral">Sem recomendação clara</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="section-title">Queries <small>lentas, repetidas e spill remoto</small></div>
+      <div class="card">
+        <h2>Top queries do período</h2>
+        <p class="desc">Fonte: ACCOUNT_USAGE.QUERY_HISTORY · agrupamento por query_hash quando repetida</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Padrão</th>
+              <th>Warehouse</th>
+              <th>Execuções</th>
+              <th>Tempo acum.</th>
+              <th>Spill remoto</th>
+              <th>Recomendação</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <div>SELECT … JOIN fact_matricula</div>
+                <div class="mono" style="color:var(--muted)">hash a3f1… · user SVC_ETL</div>
+              </td>
+              <td>COMPUTE_WH</td>
+              <td>128</td>
+              <td>4h 12m</td>
+              <td>baixo</td>
+              <td><span class="badge warn">Priorizar otimização (muito repetida)</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div>CREATE TABLE AS … large_scan</div>
+                <div class="mono" style="color:var(--muted)">hash 91bc… · user ANALISTA</div>
+              </td>
+              <td>COMPUTE_WH</td>
+              <td>6</td>
+              <td>1h 40m</td>
+              <td>alto</td>
+              <td><span class="badge bad">Spill remoto — considerar WH maior ou lotes menores</span></td>
+            </tr>
+            <tr>
+              <td>
+                <div>CALL sp_refresh_dims()</div>
+                <div class="mono" style="color:var(--muted)">hash 44de… · user ADMIN</div>
+              </td>
+              <td>WH_TRANSFORM</td>
+              <td>14</td>
+              <td>52m</td>
+              <td>nenhum</td>
+              <td><span class="badge neutral">Sem sinal de memória</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <strong style="color:var(--text)">O que este mockup mostra:</strong>
+        uma aba nova <em>dentro</em> do Cost Management (não uma entrada nova no menu lateral),
+        com as duas fatias do MVP: <strong>Warehouses</strong> + <strong>Queries</strong>,
+        só leitura. Os números e nomes são fictícios, só para visualização.
+      </div>
+    </main>
+  </div>
+</body>
+</html>

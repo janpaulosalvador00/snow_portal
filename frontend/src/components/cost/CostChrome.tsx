@@ -5,6 +5,7 @@ const TABS = [
   "Account Overview",
   "Consumption",
   "Anomalies",
+  "Performance",
   "Budgets",
   "Resource Monitors",
 ] as const;

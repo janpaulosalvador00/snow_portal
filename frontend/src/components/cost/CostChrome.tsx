@@ -54,16 +54,36 @@ export function CostTabs({ tab, onTab }: Pick<Props, "tab" | "onTab">) {
   );
 }
 
+/** Format cache/API `fetched_at` as pt-BR "dd/mm/aaaa, hh:mm". */
+function formatUpdatedAt(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function CostPageHeader({
   contextLabel,
   creditsUsed,
+  updatedAt,
+  updatedCached,
   actions,
 }: {
   contextLabel?: string | null;
   /** When set, shows e.g. "16.0 credits used" before the warehouse pill. */
   creditsUsed?: number | null;
+  /** Cache/API snapshot time — shown left of the warehouse pill. */
+  updatedAt?: string | null;
+  updatedCached?: boolean;
   actions?: ReactNode;
 }) {
+  const updatedLabel = formatUpdatedAt(updatedAt);
   return (
     <div className="cost-page-header">
       <h1>Cost Management</h1>
@@ -73,6 +93,16 @@ export function CostPageHeader({
             <strong>{creditsUsed.toFixed(1)}</strong>
             <span className="kpi-suffix"> credits used</span>
           </div>
+        ) : null}
+        {updatedLabel ? (
+          <span
+            className="cost-header-updated muted"
+            title={updatedCached ? "Snapshot em cache" : "Atualizado agora"}
+            aria-live="polite"
+          >
+            Atualizado · {updatedLabel}
+            {updatedCached ? " (cache)" : ""}
+          </span>
         ) : null}
         {contextLabel ? (
           <span className="cost-context-pill" title="Warehouse da conexão ativa">

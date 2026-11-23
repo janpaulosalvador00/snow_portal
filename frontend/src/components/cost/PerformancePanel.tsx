@@ -126,14 +126,12 @@ export function PerformancePanel({
             <div className="table cost-table perf-table">
               <div className="table-head">
                 <span>WAREHOUSE</span>
-                <span>SIZE</span>
                 <span>FILA</span>
                 <span>RECOMENDAÇÃO</span>
               </div>
               {data.warehouses.map((w) => (
                 <div key={w.warehouse_name} className="table-row">
                   <span>{w.warehouse_name}</span>
-                  <span className="muted">{w.size || "—"}</span>
                   <span>{w.queue_label}</span>
                   <span>
                     <span className={badgeClass(w.recommendation?.level)}>

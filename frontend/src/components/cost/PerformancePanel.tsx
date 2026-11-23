@@ -47,6 +47,8 @@ export type PerformanceResp = {
     executions: number;
     total_elapsed_ms: number;
     total_elapsed_label: string;
+    /** Última execução do padrão no período (QUERY_HISTORY end_time / start_time). */
+    last_end_time?: string | null;
     spill_label: string;
     recommendation: PerformanceRec;
   }[];
@@ -248,6 +250,24 @@ function formatFetchedAt(iso: string | null | undefined): string | null {
   });
 }
 
+/** Split ISO timestamp into pt-BR date + time for Top queries columns. */
+function formatLastExecParts(iso: string | null | undefined): { date: string; time: string } | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return {
+    date: d.toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }),
+    time: d.toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+  };
+}
+
 function FetchedAtLabel({
   fetchedAt,
   cached,
@@ -411,11 +431,14 @@ export function PerformancePanel({
                 <span>WAREHOUSE</span>
                 <span className="perf-num">EXEC.</span>
                 <span className="perf-num">TEMPO</span>
+                <span className="perf-num">DATA</span>
+                <span className="perf-num">HORA</span>
                 <span>SINAL</span>
               </div>
               {visibleQueries.map((q) => {
                 const signal = querySignal(q.recommendation);
                 const warehouse = q.warehouse_name || "—";
+                const lastExec = formatLastExecParts(q.last_end_time);
                 return (
                   <div key={q.pattern_key || q.sample_query_id} className="table-row">
                     <span className="perf-query-cell">
@@ -431,6 +454,12 @@ export function PerformancePanel({
                     </span>
                     <span className="perf-num">{q.executions}</span>
                     <span className="perf-num">{q.total_elapsed_label}</span>
+                    <span className="perf-num perf-datetime" title={q.last_end_time || undefined}>
+                      {lastExec?.date ?? "—"}
+                    </span>
+                    <span className="perf-num perf-datetime" title={q.last_end_time || undefined}>
+                      {lastExec?.time ?? "—"}
+                    </span>
                     <span className="perf-signal-cell">
                       {signal ? (
                         <span className={badgeClass(signal.level)} title={q.recommendation?.text}>

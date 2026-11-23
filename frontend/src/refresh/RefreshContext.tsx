@@ -13,7 +13,9 @@ import { operationalConnections } from "../connections/lifecycle";
 import {
   CONNECTIONS_GLOBAL_INTERVAL_KEY,
   CONNECTIONS_LAST_REFRESHED_KEY,
+  REFRESH_DUE_WATCHDOG_MS,
   computeNextRefreshAt,
+  isRefreshDue,
   loadGlobalInterval,
   loadLastRefreshedAt,
 } from "../connections/refreshIntervals";
@@ -51,6 +53,8 @@ type RefreshContextValue = {
   setGlobalInterval: (value: string) => void;
   /** Re-read connection schedules (after create/update/delete). */
   reloadSchedules: () => void;
+  /** Seed schedules from a page that already loaded `/api/connections`. */
+  syncSchedules: (list: ConnRow[]) => void;
 };
 
 const CONCURRENCY = 3;
@@ -97,6 +101,19 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
   const [schedules, setSchedules] = useState<ConnRow[]>([]);
   const [scheduleTick, setScheduleTick] = useState(0);
   const inFlight = useRef<Promise<void> | null>(null);
+  const lastRefreshedAtRef = useRef(lastRefreshedAt);
+  const schedulesRef = useRef(schedules);
+  /** Per-connection last auto-fire (ms); Global cohort uses lastRefreshedAt instead. */
+  const connLastFireRef = useRef<Record<number, number>>({});
+  const lastEmptyRetryMs = useRef(0);
+
+  useEffect(() => {
+    lastRefreshedAtRef.current = lastRefreshedAt;
+  }, [lastRefreshedAt]);
+
+  useEffect(() => {
+    schedulesRef.current = schedules;
+  }, [schedules]);
 
   const setLastRefreshedAt = useCallback((iso: string) => {
     setLastRefreshedAtState(iso);
@@ -112,6 +129,10 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
     setScheduleTick((n) => n + 1);
   }, []);
 
+  const syncSchedules = useCallback((list: ConnRow[]) => {
+    setSchedules(operationalConnections(list));
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void api<ConnRow[]>("/api/connections")
@@ -120,7 +141,8 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setSchedules(operationalConnections(list));
       })
       .catch(() => {
-        if (!cancelled) setSchedules([]);
+        // Keep prior schedules on error — clearing to [] dismantles timers while
+        // Contas salvas can still show cards from its own successful fetch.
       });
     return () => {
       cancelled = true;
@@ -148,6 +170,8 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
         // Resolve against a live catalog so archived connections never refresh,
         // including when callers pass an explicit id list (Global cohort timers).
         const catalog = operationalConnections(await api<ConnRow[]>("/api/connections"));
+        // Keep timer schedules aligned with the live catalog.
+        setSchedules(catalog);
         const activeIds = new Set(catalog.map((c) => c.id));
         const ids = (
           Array.isArray(connectionId) && connectionId.length
@@ -155,7 +179,7 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
             : catalog.map((c) => c.id)
         ).filter((id) => Number.isFinite(id));
         if (ids.length === 0) {
-          setLastRefreshedAt(new Date().toISOString());
+          // Nothing refreshed — do not advance Última/Próxima (false tick).
           return;
         }
 
@@ -229,38 +253,76 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
     return run;
   }, []);
 
-  // Auto-refresh: per-connection minutes, or Contas salvas global for NULL intervals.
-  // null = Global cohort; 0 = Desligada (never schedule, even if Global is on); 1..60 = own timer.
-  // schedules already excludes is_active=false.
+  // Auto-refresh: wall-clock due check (not bare setInterval delays).
+  // null = Global cohort; 0 = Desligada; 1..60 = own timer. schedules excludes is_active=false.
+  // After Mac sleep / background tab, visibility/focus/pageshow + watchdog tick compare
+  // Date.now() to last+interval and fire immediately when overdue.
+  //
+  // IMPORTANT: do not bail when schedules is empty — Contas salvas can show cards from its
+  // own fetch while RefreshContext schedules stayed [] (cancelled fetch / error wipe). In
+  // that case Próxima still renders from last+interval with no timer; keep retrying load.
   useEffect(() => {
-    if (!schedules.length) return;
-    const timers: number[] = [];
     const globalSeconds = Number(globalInterval);
-    const globalIds = schedules
-      .filter((c) => c.refresh_interval == null)
-      .map((c) => c.id);
+    // First fire with no last yet: wait one interval from this schedule start.
+    const scheduleAnchorMs = Date.now();
 
-    if (globalSeconds > 0 && globalIds.length) {
-      timers.push(
-        window.setInterval(() => {
-          void refreshAll(globalIds);
-        }, globalSeconds * 1000),
-      );
-    }
+    const checkDue = () => {
+      if (document.visibilityState === "hidden") return;
+      const now = Date.now();
+      const current = schedulesRef.current;
+      const globalIds = current
+        .filter((c) => c.refresh_interval == null)
+        .map((c) => c.id);
 
-    for (const conn of schedules) {
-      const minutes = conn.refresh_interval;
-      // Skip Global (null) and Desligada (0) — only positive minutes get a dedicated timer.
-      if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) continue;
-      timers.push(
-        window.setInterval(() => {
+      if (!current.length) {
+        // Schedules never landed — nudge a reload so we do not sit forever with a stale Próxima.
+        if (now - lastEmptyRetryMs.current >= 15_000) {
+          lastEmptyRetryMs.current = now;
+          setScheduleTick((n) => n + 1);
+        }
+        return;
+      }
+
+      if (
+        globalSeconds > 0 &&
+        globalIds.length &&
+        isRefreshDue(lastRefreshedAtRef.current, globalSeconds, now, scheduleAnchorMs)
+      ) {
+        void refreshAll(globalIds);
+      }
+
+      for (const conn of current) {
+        const minutes = conn.refresh_interval;
+        if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) continue;
+        const intervalSeconds = minutes * 60;
+        const lastMs = connLastFireRef.current[conn.id];
+        const lastIso = lastMs != null ? new Date(lastMs).toISOString() : null;
+        if (isRefreshDue(lastIso, intervalSeconds, now, scheduleAnchorMs)) {
+          connLastFireRef.current[conn.id] = now;
           void refreshAll(conn.id);
-        }, minutes * 60 * 1000),
-      );
-    }
+        }
+      }
+    };
 
-    return () => timers.forEach((t) => window.clearInterval(t));
-  }, [schedules, globalInterval, refreshAll]);
+    const tickId = window.setInterval(checkDue, REFRESH_DUE_WATCHDOG_MS);
+    const onResume = () => {
+      if (document.visibilityState === "hidden") return;
+      checkDue();
+    };
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("focus", onResume);
+    window.addEventListener("pageshow", onResume);
+    // Remount / wake: catch a Próxima already in the past.
+    onResume();
+
+    return () => {
+      window.clearInterval(tickId);
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("focus", onResume);
+      window.removeEventListener("pageshow", onResume);
+    };
+    // schedules via schedulesRef — avoid resetting the wall-clock anchor on every list update.
+  }, [globalInterval, refreshAll]);
 
   // Same formula as AlertsPage: last && globalSeconds → last + interval.
   const nextGlobalRefreshAt = useMemo(
@@ -280,6 +342,7 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
       globalInterval,
       setGlobalInterval,
       reloadSchedules,
+      syncSchedules,
     }),
     [
       refreshAll,
@@ -292,6 +355,7 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
       globalInterval,
       setGlobalInterval,
       reloadSchedules,
+      syncSchedules,
     ],
   );
   return <RefreshContext.Provider value={value}>{children}</RefreshContext.Provider>;

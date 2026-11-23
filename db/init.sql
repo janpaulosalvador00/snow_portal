@@ -27,11 +27,16 @@ CREATE TABLE IF NOT EXISTS connections (
     pat_encrypted       TEXT,
     warehouse           VARCHAR(200),
     role_name           VARCHAR(200),
+    -- Minutes between auto-refreshes; NULL = follow Contas salvas global interval.
+    refresh_interval    INTEGER,
     created_by          INT REFERENCES users(id) ON DELETE SET NULL,
     team_id             INT REFERENCES teams(id) ON DELETE SET NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Idempotent for DBs created before refresh_interval existed.
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS refresh_interval INTEGER;
 
 CREATE TABLE IF NOT EXISTS connection_acl (
     connection_id   INT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,

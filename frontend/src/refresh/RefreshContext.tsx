@@ -2,12 +2,17 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { api, ApiError } from "../api/client";
+import {
+  CONNECTIONS_GLOBAL_INTERVAL_KEY,
+  loadGlobalInterval,
+} from "../connections/refreshIntervals";
 
 type RefreshResult = {
   ok: boolean;
@@ -17,7 +22,7 @@ type RefreshResult = {
   warehouse_auto_saved: string | null;
 };
 
-type ConnRow = { id: number };
+type ConnRow = { id: number; refresh_interval?: number | null };
 
 type RefreshProgress = { done: number; total: number } | null;
 
@@ -25,15 +30,23 @@ type RefreshContextValue = {
   /**
    * Without connectionId: refresh every connection the user can see.
    * With connectionId: refresh only that connection (e.g. Alerts per-card).
+   * With number[]: refresh those connections.
    */
-  refreshAll: (connectionId?: number) => Promise<void>;
+  refreshAll: (connectionId?: number | number[]) => Promise<void>;
   /** Bumps after each global refresh; pages add it to their load effects. */
   refreshToken: number;
   refreshing: boolean;
   /** Progress while refreshing multiple connections (null when idle / single). */
   refreshProgress: RefreshProgress;
   lastRefreshedAt: string | null;
+  /** Next Contas salvas global auto-refresh (null when Desligada or never started). */
+  nextGlobalRefreshAt: string | null;
   refreshError: string | null;
+  /** Contas salvas global interval (seconds as string; "0" = off). */
+  globalInterval: string;
+  setGlobalInterval: (value: string) => void;
+  /** Re-read connection schedules (after create/update/delete). */
+  reloadSchedules: () => void;
 };
 
 const CONCURRENCY = 3;
@@ -76,9 +89,35 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
   const [refreshProgress, setRefreshProgress] = useState<RefreshProgress>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [globalInterval, setGlobalIntervalState] = useState(loadGlobalInterval);
+  const [schedules, setSchedules] = useState<ConnRow[]>([]);
+  const [scheduleTick, setScheduleTick] = useState(0);
   const inFlight = useRef<Promise<void> | null>(null);
 
-  const refreshAll = useCallback((connectionId?: number) => {
+  const setGlobalInterval = useCallback((value: string) => {
+    setGlobalIntervalState(value);
+    localStorage.setItem(CONNECTIONS_GLOBAL_INTERVAL_KEY, value);
+  }, []);
+
+  const reloadSchedules = useCallback(() => {
+    setScheduleTick((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api<ConnRow[]>("/api/connections")
+      .then((list) => {
+        if (!cancelled) setSchedules(list);
+      })
+      .catch(() => {
+        if (!cancelled) setSchedules([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scheduleTick, refreshToken]);
+
+  const refreshAll = useCallback((connectionId?: number | number[]) => {
     if (inFlight.current) return inFlight.current;
 
     setRefreshing(true);
@@ -87,7 +126,7 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
 
     const run = (async () => {
       try {
-        if (connectionId != null) {
+        if (typeof connectionId === "number") {
           const res = await refreshOneConnection(connectionId);
           setLastRefreshedAt(res.refreshed_at);
           if (res.failed > 0) {
@@ -96,8 +135,13 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const list = await api<ConnRow[]>("/api/connections");
-        const ids = list.map((c) => c.id).filter((id) => Number.isFinite(id));
+        const list =
+          Array.isArray(connectionId) && connectionId.length
+            ? connectionId.map((id) => ({ id }))
+            : await api<ConnRow[]>("/api/connections");
+        const ids = (Array.isArray(connectionId) ? connectionId : list.map((c) => c.id)).filter(
+          (id) => Number.isFinite(id),
+        );
         if (ids.length === 0) {
           setLastRefreshedAt(new Date().toISOString());
           return;
@@ -173,6 +217,45 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
     return run;
   }, []);
 
+  // Auto-refresh: per-connection minutes, or Contas salvas global for NULL intervals.
+  // Missing refresh_interval → treat as Global. Desligada (0) skips global cohort only.
+  useEffect(() => {
+    if (!schedules.length) return;
+    const timers: number[] = [];
+    const globalSeconds = Number(globalInterval);
+    const globalIds = schedules
+      .filter((c) => c.refresh_interval == null)
+      .map((c) => c.id);
+
+    if (globalSeconds > 0 && globalIds.length) {
+      timers.push(
+        window.setInterval(() => {
+          void refreshAll(globalIds);
+        }, globalSeconds * 1000),
+      );
+    }
+
+    for (const conn of schedules) {
+      const minutes = conn.refresh_interval;
+      if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) continue;
+      timers.push(
+        window.setInterval(() => {
+          void refreshAll(conn.id);
+        }, minutes * 60 * 1000),
+      );
+    }
+
+    return () => timers.forEach((t) => window.clearInterval(t));
+  }, [schedules, globalInterval, refreshAll]);
+
+  const nextGlobalRefreshAt = useMemo(() => {
+    const globalSeconds = Number(globalInterval);
+    if (!(globalSeconds > 0) || !lastRefreshedAt) return null;
+    const base = Date.parse(lastRefreshedAt);
+    if (Number.isNaN(base)) return null;
+    return new Date(base + globalSeconds * 1000).toISOString();
+  }, [globalInterval, lastRefreshedAt]);
+
   const value = useMemo(
     () => ({
       refreshAll,
@@ -180,9 +263,24 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
       refreshing,
       refreshProgress,
       lastRefreshedAt,
+      nextGlobalRefreshAt,
       refreshError,
+      globalInterval,
+      setGlobalInterval,
+      reloadSchedules,
     }),
-    [refreshAll, refreshToken, refreshing, refreshProgress, lastRefreshedAt, refreshError],
+    [
+      refreshAll,
+      refreshToken,
+      refreshing,
+      refreshProgress,
+      lastRefreshedAt,
+      nextGlobalRefreshAt,
+      refreshError,
+      globalInterval,
+      setGlobalInterval,
+      reloadSchedules,
+    ],
   );
   return <RefreshContext.Provider value={value}>{children}</RefreshContext.Provider>;
 }

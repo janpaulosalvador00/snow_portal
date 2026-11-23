@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { FilterPill } from "./FilterPill";
+import { classifyQueryKind } from "./queryKind";
 
 export type PerformanceRec = {
   level: "ok" | "warn" | "bad" | "neutral" | string;
@@ -41,6 +42,8 @@ export type PerformanceResp = {
   queries: {
     pattern_key: string;
     query_preview: string;
+    /** Snowflake ACCOUNT_USAGE.QUERY_HISTORY.QUERY_TYPE (SELECT, CALL, EXECUTE_STREAMLIT, …). */
+    query_type?: string | null;
     sample_query_id: string;
     user_name: string;
     warehouse_name: string;
@@ -429,6 +432,7 @@ export function PerformancePanel({
           <div className="perf-queries-scroll" role="region" aria-label="Top queries do período">
             <div className="table cost-table perf-table perf-queries">
               <div className="table-head">
+                <span>TIPO</span>
                 <span>QUERY</span>
                 <span>WAREHOUSE</span>
                 <span className="perf-num">EXEC.</span>
@@ -441,8 +445,17 @@ export function PerformancePanel({
                 const signal = querySignal(q.recommendation);
                 const warehouse = q.warehouse_name || "—";
                 const lastExec = formatLastExecParts(q.last_end_time);
+                const kind = classifyQueryKind(q.query_type, q.query_preview);
                 return (
                   <div key={q.pattern_key || q.sample_query_id} className="table-row">
+                    <span className="perf-kind-cell">
+                      <span
+                        className={`perf-kind-badge kind-${kind.replace(/\s+/g, "-").toLowerCase()}`}
+                        title={q.query_type ? `QUERY_TYPE: ${q.query_type}` : undefined}
+                      >
+                        {kind}
+                      </span>
+                    </span>
                     <span className="perf-query-cell">
                       <div className="perf-preview" title={q.query_preview || undefined}>
                         {q.query_preview || "—"}

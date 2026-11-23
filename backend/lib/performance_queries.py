@@ -217,10 +217,13 @@ def performance(
         load_df.columns = [str(c).lower() for c in load_df.columns]
 
     # --- Query hotspots ---
+    # query_type: Snowflake statement class (SELECT, CALL, EXECUTE_STREAMLIT, …).
+    # Used by the UI classifyQueryKind; QUERY_TAG omitted (app-specific, not a kind signal).
     query_sql = f"""
         SELECT
           COALESCE(query_hash, query_id) AS pattern_key,
           ANY_VALUE(LEFT(query_text, 180)) AS query_preview,
+          ANY_VALUE(query_type) AS query_type,
           ANY_VALUE(query_id) AS sample_query_id,
           ANY_VALUE(user_name) AS user_name,
           ANY_VALUE(warehouse_name) AS warehouse_name,
@@ -353,10 +356,12 @@ def performance(
             if len(preview) > 160:
                 preview = preview[:157] + "…"
             pattern = str(row.get("pattern_key") or "")
+            q_type = str(row.get("query_type") or "").strip() or None
             queries.append(
                 {
                     "pattern_key": pattern,
                     "query_preview": preview,
+                    "query_type": q_type,
                     "sample_query_id": str(row.get("sample_query_id") or ""),
                     "user_name": str(row.get("user_name") or ""),
                     "warehouse_name": str(row.get("warehouse_name") or ""),

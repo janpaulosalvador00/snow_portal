@@ -25,6 +25,10 @@ import {
   type PerformanceResp,
 } from "../components/cost/PerformancePanel";
 import { StackedConsumptionChart } from "../components/cost/StackedConsumptionChart";
+import {
+  isConnectionInUse,
+  operationalConnections,
+} from "../connections/lifecycle";
 import { useRefresh } from "../refresh/RefreshContext";
 import { RefreshIconButton } from "../refresh/RefreshIconButton";
 
@@ -34,6 +38,8 @@ type Conn = {
   account_identifier: string;
   warehouse?: string | null;
   role_name?: string | null;
+  /** Durable lifecycle — false = archived / no longer used. */
+  is_active?: boolean | null;
 };
 
 type StackBy = "service" | "resource" | "account";
@@ -251,12 +257,26 @@ export function CostManagementPage() {
   function reloadConnections(opts?: { syncActive?: boolean }) {
     void api<Conn[]>("/api/connections")
       .then((list) => {
-        setConnections(list);
-        if (!opts?.syncActive) return;
+        // Operational selector: only in-use connections (archived stay off the chip).
+        const usable = operationalConnections(list);
+        setConnections(usable);
+        if (!opts?.syncActive) {
+          // Drop current pick if it was archived since last load.
+          setConnectionId((prev) => {
+            if (prev === "" || usable.some((c) => c.id === prev)) return prev;
+            return "";
+          });
+          const stored = getActiveConnectionId();
+          if (stored && !usable.some((c) => c.id === stored)) {
+            setActiveConnectionId(null);
+          }
+          return;
+        }
         const active = getActiveConnectionId();
-        if (active && list.some((c) => c.id === active)) {
+        if (active && usable.some((c) => c.id === active)) {
           setConnectionId(active);
-        } else if (!active) {
+        } else {
+          if (active) setActiveConnectionId(null);
           setConnectionId("");
         }
       })
@@ -379,6 +399,9 @@ export function CostManagementPage() {
   }, [connectionId, relatedAccount, accountPick.connId]);
 
   function selectConnection(id: number | "") {
+    if (id !== "" && !connections.some((c) => c.id === id && isConnectionInUse(c))) {
+      return;
+    }
     setAccountPick({ connId: "", value: PENDING_ACCOUNT });
     setConnectionId(id);
     setActiveConnectionId(id === "" ? null : id);

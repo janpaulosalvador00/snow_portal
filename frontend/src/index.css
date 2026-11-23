@@ -3571,11 +3571,68 @@ body.modal-open {
   border-radius: 10px;
 }
 
+.global-refresh-main {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
 .global-refresh-times {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
   font-size: 0.88rem;
+}
+
+.global-refresh-info {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #12151a;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.global-refresh-info:hover,
+.global-refresh-info:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.global-refresh-info-icon {
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1;
+}
+
+.global-refresh-info-modal {
+  width: min(440px, 100%);
+  max-height: none;
+}
+
+.global-refresh-info-text {
+  margin: 0.85rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.global-refresh-info-text strong {
+  color: var(--text);
+}
+
+.global-refresh-info-text em {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 500;
 }
 
 .global-refresh-times .row {

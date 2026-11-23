@@ -437,19 +437,40 @@ function compareQueries(a: QueryRow, b: QueryRow, key: QuerySortKey, dir: SortDi
 export function PerformancePanel({
   data,
   loading,
+  queryLimit,
+  onQueryLimit,
+  selectedDay,
+  onSelectedDay,
 }: {
   data: PerformanceResp;
   loading?: boolean;
+  /** Top-N for queries — owned by Cost page (URL sync). */
+  queryLimit: string;
+  onQueryLimit: (value: string) => void;
+  /** Chart day filter (UTC ISO) — owned by Cost page (URL sync). */
+  selectedDay: string | null;
+  onSelectedDay: (value: string | null) => void;
 }) {
-  const [queryLimit, setQueryLimit] = useState("10");
   const [statusDetail, setStatusDetail] = useState<StatusDetail | null>(null);
-  /** Selected chart day (UTC ISO YYYY-MM-DD); null = full Time Range. */
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
-  // Drop day filter when the loaded window / warehouse scope changes.
+  // Drop day filter only when it falls outside the loaded window / series.
   useEffect(() => {
-    setSelectedDay(null);
-  }, [data.start_date, data.end_date, data.warehouse_filter, data.days]);
+    if (!selectedDay) return;
+    const start = data.start_date;
+    const end = data.end_date;
+    if (start && selectedDay < start) {
+      onSelectedDay(null);
+      return;
+    }
+    if (end && selectedDay > end) {
+      onSelectedDay(null);
+      return;
+    }
+    const series = data.load_series ?? [];
+    if (series.length > 0 && !series.some((r) => r.date === selectedDay)) {
+      onSelectedDay(null);
+    }
+  }, [data.start_date, data.end_date, data.load_series, selectedDay, onSelectedDay]);
 
   const chartRows = useMemo(
     () =>
@@ -463,7 +484,7 @@ export function PerformancePanel({
   );
 
   function toggleDay(dayIso: string) {
-    setSelectedDay((prev) => (prev === dayIso ? null : dayIso));
+    onSelectedDay(selectedDay === dayIso ? null : dayIso);
   }
 
   const sizeByName = useMemo(() => {
@@ -543,7 +564,7 @@ export function PerformancePanel({
               <button
                 type="button"
                 className="perf-day-chip"
-                onClick={() => setSelectedDay(null)}
+                onClick={() => onSelectedDay(null)}
                 aria-label={`Limpar filtro do dia ${shortDate(selectedDay)}`}
               >
                 Dia: {shortDate(selectedDay)}
@@ -716,7 +737,7 @@ export function PerformancePanel({
               <FilterPill
                 label="Top"
                 value={queryLimit}
-                onChange={setQueryLimit}
+                onChange={onQueryLimit}
                 options={[...QUERY_LIMIT_OPTIONS]}
                 disabled={loading}
               />

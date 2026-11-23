@@ -27,6 +27,15 @@ import {
   PerformancePanel,
   type PerformanceResp,
 } from "../components/cost/PerformancePanel";
+import {
+  buildCostSearch,
+  parseConnectionParam,
+  parseDateRangeFromParams,
+  parseDayParam,
+  parseTopParam,
+  parseWarehouseParam,
+  type PerfTopValue,
+} from "../components/cost/costUrlParams";
 import { StackedConsumptionChart } from "../components/cost/StackedConsumptionChart";
 import {
   isConnectionInUse,
@@ -213,13 +222,26 @@ export function CostManagementPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [connections, setConnections] = useState<Conn[]>([]);
-  const [connectionId, setConnectionId] = useState<number | "">(getActiveConnectionId() ?? "");
-  const [dateRange, setDateRange] = useState<DateRangeValue>({ mode: "preset", days: 28 });
-  const [usageType, setUsageType] = useState("Compute");
-  const [grain, setGrain] = useState("day");
-  const [serviceType, setServiceType] = useState(DEFAULT_SERVICE_TYPE);
+  const [connectionId, setConnectionId] = useState<number | "">(() => {
+    const fromUrl = parseConnectionParam(searchParams.get("connection"));
+    if (fromUrl != null) return fromUrl;
+    return getActiveConnectionId() ?? "";
+  });
+  const [dateRange, setDateRange] = useState<DateRangeValue>(() =>
+    parseDateRangeFromParams(searchParams),
+  );
+  const [usageType, setUsageType] = useState(() => searchParams.get("usage") || "Compute");
+  const [grain, setGrain] = useState(() => {
+    const g = searchParams.get("grain");
+    return g === "month" ? "month" : "day";
+  });
+  const [serviceType, setServiceType] = useState(
+    () => searchParams.get("service") || DEFAULT_SERVICE_TYPE,
+  );
   const [serviceOptions, setServiceOptions] = useState(DEFAULT_SERVICE_OPTIONS);
-  const [resourceFilter, setResourceFilter] = useState("All");
+  const [resourceFilter, setResourceFilter] = useState(
+    () => searchParams.get("resource") || "All",
+  );
   /** Account the connection lands on (`/api/cost/connection-account`), keyed by connection. */
   const [connAccount, setConnAccount] = useState<{ connId: number; info: ConnAccount | null } | null>(
     null,
@@ -241,7 +263,15 @@ export function CostManagementPage() {
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [anom, setAnom] = useState<AnomaliesResp | null>(null);
   const [perf, setPerf] = useState<PerformanceResp | null>(null);
-  const [perfWarehouse, setPerfWarehouse] = useState("All");
+  const [perfWarehouse, setPerfWarehouse] = useState(() =>
+    parseWarehouseParam(searchParams.get("warehouse")),
+  );
+  const [perfTop, setPerfTop] = useState<PerfTopValue>(() =>
+    parseTopParam(searchParams.get("top")),
+  );
+  const [perfDay, setPerfDay] = useState<string | null>(() =>
+    parseDayParam(searchParams.get("day")),
+  );
   const [monitors, setMonitors] = useState<MonitorsResp | null>(null);
   const [budgets, setBudgets] = useState<BudgetsResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -257,31 +287,97 @@ export function CostManagementPage() {
     tabFromSlug(searchParams.get("tab")) ??
     tabFromSlug(pathTabSlug) ??
     DEFAULT_COST_TAB;
-  const writeTabUrl = (next: CostTab) => {
-    const params = new URLSearchParams(searchParams);
-    params.set("tab", tabToSlug(next));
-    const search = params.toString();
-    navigate(
-      { pathname: "/cost-management", search: search ? `?${search}` : "" },
-      { replace: true },
-    );
-  };
-  const setTab = (next: CostTab) => {
-    writeTabUrl(next);
-  };
+  const [tabOverride, setTabOverride] = useState<CostTab | null>(null);
+  const activeTab = tabOverride ?? tab;
   const loadAbortRef = useRef<AbortController | null>(null);
   const skipConnListRefresh = useRef(true);
+  const writingUrlRef = useRef(false);
   const { refreshToken, refreshError } = useRefresh();
 
-  // Canonicalize to `/cost-management?tab=<slug>` (fixes missing/invalid + path deep-links).
+  // Stable filter key — avoid re-running when dateRange object identity churns.
+  const dateKey =
+    dateRange.mode === "preset"
+      ? `p:${dateRange.days}`
+      : `c:${dateRange.start}:${dateRange.end}`;
+
+  const desiredSearch = useMemo(
+    () =>
+      buildCostSearch({
+        tabSlug: tabToSlug(activeTab),
+        connectionId,
+        dateRange,
+        warehouse: perfWarehouse,
+        top: perfTop,
+        day: perfDay,
+        usageType,
+        serviceType,
+        resourceFilter,
+        grain,
+      }),
+    [
+      activeTab,
+      connectionId,
+      dateKey,
+      dateRange,
+      perfWarehouse,
+      perfTop,
+      perfDay,
+      usageType,
+      serviceType,
+      resourceFilter,
+      grain,
+    ],
+  );
+
+  const setTab = (next: CostTab) => {
+    setTabOverride(next);
+  };
+
+  // Push filter state → URL (replaceState-style navigate; keep scroll).
   useEffect(() => {
-    const canonical = tabToSlug(tab);
-    const raw = searchParams.get("tab");
     const onBasePath = /^\/cost-management\/?$/i.test(location.pathname);
-    if (raw === canonical && onBasePath) return;
-    writeTabUrl(tab);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-sync when URL pieces change
-  }, [location.pathname, searchParams, tab]);
+    if (onBasePath && searchParams.toString() === desiredSearch) return;
+    writingUrlRef.current = true;
+    navigate(
+      { pathname: "/cost-management", search: desiredSearch ? `?${desiredSearch}` : "" },
+      { replace: true, preventScrollReset: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync from state fingerprint only
+  }, [desiredSearch, location.pathname, navigate]);
+
+  // Pull URL → state on back/forward (skip our own writes).
+  useEffect(() => {
+    if (writingUrlRef.current) {
+      writingUrlRef.current = false;
+      return;
+    }
+    if (searchParams.toString() === desiredSearch) return;
+    const nextTab =
+      tabFromSlug(searchParams.get("tab")) ??
+      tabFromSlug(pathTabSlug) ??
+      DEFAULT_COST_TAB;
+    setTabOverride(nextTab);
+    const urlConn = parseConnectionParam(searchParams.get("connection"));
+    if (urlConn != null) {
+      setConnectionId(urlConn);
+      setActiveConnectionId(urlConn);
+    }
+    setDateRange(parseDateRangeFromParams(searchParams));
+    setPerfWarehouse(parseWarehouseParam(searchParams.get("warehouse")));
+    setPerfTop(parseTopParam(searchParams.get("top")));
+    setPerfDay(parseDayParam(searchParams.get("day")));
+    const usage = searchParams.get("usage");
+    if (usage) setUsageType(usage);
+    else setUsageType("Compute");
+    const service = searchParams.get("service");
+    if (service) setServiceType(service);
+    else setServiceType(DEFAULT_SERVICE_TYPE);
+    const resource = searchParams.get("resource");
+    setResourceFilter(resource || "All");
+    const g = searchParams.get("grain");
+    setGrain(g === "month" ? "month" : "day");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to external URL changes
+  }, [searchParams]);
 
   /** Keep warehouse pill in sync with Conexões (saved `connection.warehouse`). */
   function reloadConnections(opts?: { syncActive?: boolean }) {
@@ -300,6 +396,15 @@ export function CostManagementPage() {
           if (stored && !usable.some((c) => c.id === stored)) {
             setActiveConnectionId(null);
           }
+          return;
+        }
+        // URL `connection=` wins over localStorage so F5/shareable links stick.
+        const urlConn = parseConnectionParam(
+          new URLSearchParams(window.location.search).get("connection"),
+        );
+        if (urlConn != null && usable.some((c) => c.id === urlConn)) {
+          setConnectionId(urlConn);
+          setActiveConnectionId(urlConn);
           return;
         }
         const active = getActiveConnectionId();
@@ -435,6 +540,8 @@ export function CostManagementPage() {
     setAccountPick({ connId: "", value: PENDING_ACCOUNT });
     setConnectionId(id);
     setActiveConnectionId(id === "" ? null : id);
+    setPerfWarehouse("All");
+    setPerfDay(null);
   }
 
   async function load() {
@@ -452,7 +559,7 @@ export function CostManagementPage() {
       setLoading(false);
       return;
     }
-    if (tab === "Consumption" && accountFilter === PENDING_ACCOUNT) {
+    if (activeTab === "Consumption" && accountFilter === PENDING_ACCOUNT) {
       // Re-runs once the connection's account resolves; never query with a stale account.
       loadAbortRef.current?.abort();
       loadAbortRef.current = null;
@@ -498,7 +605,7 @@ export function CostManagementPage() {
       end_date: endIso,
     });
     try {
-      if (tab === "Consumption") {
+      if (activeTab === "Consumption") {
         qs.set("usage_type", usageType);
         // Always fetch day grain; By Month aggregates client-side from the same series.
         qs.set("grain", "day");
@@ -557,17 +664,17 @@ export function CostManagementPage() {
           setStackBy(res.stack_by ?? "resource");
         }
         setDataWindow({ start: startIso, end: endIso });
-      } else if (tab === "Account Overview") {
+      } else if (activeTab === "Account Overview") {
         const res = await api<AccountOverview>(`/api/cost/account-overview?${qs}`, {
           signal,
         });
         if (signal.aborted) return;
         setOverview(res);
-      } else if (tab === "Anomalies") {
+      } else if (activeTab === "Anomalies") {
         const res = await api<AnomaliesResp>(`/api/cost/anomalies?${qs}`, { signal });
         if (signal.aborted) return;
         setAnom(res);
-      } else if (tab === "Performance") {
+      } else if (activeTab === "Performance") {
         const perfQs = new URLSearchParams(qs);
         if (perfWarehouse && perfWarehouse !== "All") {
           perfQs.set("warehouse", perfWarehouse);
@@ -586,14 +693,14 @@ export function CostManagementPage() {
         ) {
           setPerfWarehouse("All");
         }
-      } else if (tab === "Resource Monitors") {
+      } else if (activeTab === "Resource Monitors") {
         const res = await api<MonitorsResp>(
           `/api/cost/resource-monitors?connection_id=${id}`,
           { signal },
         );
         if (signal.aborted) return;
         setMonitors(res);
-      } else if (tab === "Budgets") {
+      } else if (activeTab === "Budgets") {
         const res = await api<BudgetsResp>(`/api/cost/budgets?connection_id=${id}`, {
           signal,
         });
@@ -617,12 +724,6 @@ export function CostManagementPage() {
     }
   }
 
-  // Stable filter key — avoid re-running when dateRange object identity churns.
-  const dateKey =
-    dateRange.mode === "preset"
-      ? `p:${dateRange.days}`
-      : `c:${dateRange.start}:${dateRange.end}`;
-
   // Load on tab/connection and whenever filters that hit the API change.
   // Resources / By Day|Month still adjust the last response client-side.
   useEffect(() => {
@@ -634,7 +735,7 @@ export function CostManagementPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     connectionId,
-    tab,
+    activeTab,
     dateKey,
     usageType,
     serviceType,
@@ -644,22 +745,23 @@ export function CostManagementPage() {
   ]);
 
   // Changing Service Type invalidates resource picks from other service types.
+  const skipServiceResourceReset = useRef(true);
   useEffect(() => {
+    if (skipServiceResourceReset.current) {
+      skipServiceResourceReset.current = false;
+      return;
+    }
     setResourceFilter("All");
   }, [serviceType]);
 
-  useEffect(() => {
-    setPerfWarehouse("All");
-  }, [connectionId]);
-
   const activeConn = connections.find((c) => c.id === connectionId);
   const hasTabData =
-    (tab === "Consumption" && !!data) ||
-    (tab === "Account Overview" && !!overview) ||
-    (tab === "Anomalies" && !!anom) ||
-    (tab === "Performance" && !!perf) ||
-    (tab === "Resource Monitors" && !!monitors) ||
-    (tab === "Budgets" && !!budgets);
+    (activeTab === "Consumption" && !!data) ||
+    (activeTab === "Account Overview" && !!overview) ||
+    (activeTab === "Anomalies" && !!anom) ||
+    (activeTab === "Performance" && !!perf) ||
+    (activeTab === "Resource Monitors" && !!monitors) ||
+    (activeTab === "Budgets" && !!budgets);
   // Pill = warehouse saved on the connection only (never role / fake COMPUTE_WH).
   const warehousePill = activeConn
     ? activeConn.warehouse?.trim() || "WH auto"
@@ -735,7 +837,7 @@ export function CostManagementPage() {
           ) + 1,
         );
   const showTimeNonConsumption =
-    tab === "Account Overview" || tab === "Anomalies" || tab === "Performance";
+    activeTab === "Account Overview" || activeTab === "Anomalies" || activeTab === "Performance";
 
   const relatedInfo = connAccount?.connId === connectionId ? connAccount.info : null;
   const relatedLabel =
@@ -762,7 +864,7 @@ export function CostManagementPage() {
   const connectionSelect = activeConn ? (
     <span
       className="account-chip"
-      title={[accountHint, tab === "Consumption" ? orgAccountsNote : null]
+      title={[accountHint, activeTab === "Consumption" ? orgAccountsNote : null]
         .filter(Boolean)
         .join("\n")}
     >
@@ -782,9 +884,9 @@ export function CostManagementPage() {
   ) : null;
 
   const headerCreditsUsed =
-    tab === "Consumption" && data
+    activeTab === "Consumption" && data
       ? summaryRows.reduce((a, r) => a + r.credits_used, 0)
-      : tab === "Account Overview" && overview
+      : activeTab === "Account Overview" && overview
         ? overview.total_credits
         : null;
 
@@ -794,9 +896,9 @@ export function CostManagementPage() {
         <CostPageHeader
           contextLabel={warehousePill}
           creditsUsed={headerCreditsUsed}
-          updatedAt={tab === "Performance" ? perf?.fetched_at : null}
+          updatedAt={activeTab === "Performance" ? perf?.fetched_at : null}
         />
-        <CostTabs tab={tab} onTab={setTab} />
+        <CostTabs tab={activeTab} onTab={setTab} />
       </div>
 
       <p className="cost-latency muted">
@@ -812,9 +914,15 @@ export function CostManagementPage() {
       ) : (
         <>
           <div className="cost-filters">
-            {tab === "Consumption" ? (
+            {activeTab === "Consumption" ? (
               <>
-                <DateRangePicker value={dateRange} onChange={setDateRange} />
+                <DateRangePicker
+                  value={dateRange}
+                  onChange={(next) => {
+                    setDateRange(next);
+                    setPerfDay(null);
+                  }}
+                />
                 {connectionSelect}
                 <FilterPill
                   label="Tags"
@@ -854,7 +962,10 @@ export function CostManagementPage() {
                   <FilterPill
                     label="Time Range"
                     value={String(days)}
-                    onChange={(v) => setDateRange({ mode: "preset", days: Number(v) })}
+                    onChange={(v) => {
+                      setDateRange({ mode: "preset", days: Number(v) });
+                      setPerfDay(null);
+                    }}
                     options={[
                       { value: "7", label: "Last 7 days" },
                       { value: "28", label: "Last 28 days" },
@@ -863,7 +974,7 @@ export function CostManagementPage() {
                 ) : null}
               </>
             )}
-            {tab === "Anomalies" ? (
+            {activeTab === "Anomalies" ? (
               <>
                 <FilterPill
                   label="Monitors"
@@ -888,11 +999,14 @@ export function CostManagementPage() {
                 />
               </>
             ) : null}
-            {tab === "Performance" ? (
+            {activeTab === "Performance" ? (
               <FilterPill
                 label="Warehouse"
                 value={perfWarehouse}
-                onChange={setPerfWarehouse}
+                onChange={(v) => {
+                  setPerfWarehouse(v);
+                  setPerfDay(null);
+                }}
                 options={[
                   { value: "All", label: "All Warehouses" },
                   ...(perf?.warehouse_options ?? []).map((n) => ({
@@ -902,7 +1016,7 @@ export function CostManagementPage() {
                 ]}
               />
             ) : null}
-            {tab !== "Resource Monitors" ? (
+            {activeTab !== "Resource Monitors" ? (
               <RefreshIconButton disabled={loading} />
             ) : null}
           </div>
@@ -914,7 +1028,7 @@ export function CostManagementPage() {
 
           {loading && !err && !hasTabData ? <CostSkeleton /> : null}
 
-          {tab === "Consumption" && data ? (
+          {activeTab === "Consumption" && data ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               {orgAccountsNote && stackBy === "resource" ? (
                 <div className="info-box">{orgAccountsNote}</div>
@@ -944,7 +1058,7 @@ export function CostManagementPage() {
             </div>
           ) : null}
 
-          {tab === "Account Overview" && overview ? (
+          {activeTab === "Account Overview" && overview ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               <div className="metrics cost-metrics">
                 <div className="metric">
@@ -995,7 +1109,7 @@ export function CostManagementPage() {
             </div>
           ) : null}
 
-          {tab === "Anomalies" && anom ? (
+          {activeTab === "Anomalies" && anom ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               {anom.note ? <div className="info-box">{anom.note}</div> : null}
               {anom.series && anom.series.length ? (
@@ -1033,11 +1147,18 @@ export function CostManagementPage() {
             </div>
           ) : null}
 
-          {tab === "Performance" && perf ? (
-            <PerformancePanel data={perf} loading={loading} />
+          {activeTab === "Performance" && perf ? (
+            <PerformancePanel
+              data={perf}
+              loading={loading}
+              queryLimit={perfTop}
+              onQueryLimit={(v) => setPerfTop(parseTopParam(v))}
+              selectedDay={perfDay}
+              onSelectedDay={setPerfDay}
+            />
           ) : null}
 
-          {tab === "Resource Monitors" && monitors ? (
+          {activeTab === "Resource Monitors" && monitors ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               <MonitorsPanel
                 items={monitors.items || []}
@@ -1047,7 +1168,7 @@ export function CostManagementPage() {
             </div>
           ) : null}
 
-          {tab === "Budgets" && budgets ? (
+          {activeTab === "Budgets" && budgets ? (
             <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
               {budgets.supported === false ? (
                 <div className="cost-empty-state" role="status">

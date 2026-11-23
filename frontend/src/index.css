@@ -1868,31 +1868,6 @@ select:focus {
   outline: none;
 }
 
-.account-chip-all {
-  /* Same chip family as connection; slightly wider for "All Accounts" */
-  padding-right: 0.65rem;
-  max-width: min(260px, 100%);
-}
-
-.account-chip-all .account-chip-select {
-  max-width: 220px;
-}
-
-.account-chip-select:disabled {
-  opacity: 1;
-  cursor: default;
-}
-
-.account-chip.is-unresolved {
-  border-color: #9e6a03;
-  background: rgba(210, 153, 34, 0.12);
-}
-
-.account-chip.is-unresolved .account-chip-select {
-  color: var(--text-muted, #8b939e);
-  font-style: italic;
-}
-
 .cost-filter-divider {
   width: 1px;
   height: 24px;

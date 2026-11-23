@@ -219,14 +219,13 @@ export function CostManagementPage() {
     null,
   );
   /**
-   * Right-hand account pick, owned by one connection: `__all__`, ACCOUNT_NAME or `__unknown__`.
-   * Any other connection id means "not picked yet" and resolves to the connection's account.
+   * Snowflake account derived from the selected connection (`__all__`, ACCOUNT_NAME, `__unknown__`).
+   * Not exposed in the filter bar — connection change resets and re-resolves via connection-account.
    */
   const [accountPick, setAccountPick] = useState<{ connId: number | ""; value: string }>({
     connId: "",
     value: ALL_ACCOUNTS,
   });
-  const [orgAccounts, setOrgAccounts] = useState<string[]>([]);
   const [orgAccountsNote, setOrgAccountsNote] = useState<string | null>(null);
   /** Dimension the Consumption chart/table series represent (from the API `stack_by`). */
   const [stackBy, setStackBy] = useState<StackBy>("service");
@@ -410,7 +409,6 @@ export function CostManagementPage() {
       setAnom(null);
       setMonitors(null);
       setBudgets(null);
-      setOrgAccounts([]);
       setOrgAccountsNote(null);
       setStackBy("service");
       setLoading(false);
@@ -478,7 +476,6 @@ export function CostManagementPage() {
           related,
           connections.find((c) => c.id === id)?.account_identifier,
         );
-        setOrgAccounts(names);
         setOrgAccountsNote(accountsRes.note);
         // A pick the org list no longer includes falls back to the connection's account.
         let effectiveAccount = accountFilter;
@@ -573,7 +570,7 @@ export function CostManagementPage() {
       setPerf(null);
       setMonitors(null);
       setBudgets(null);
-      setOrgAccounts([]);
+      setOrgAccountsNote(null);
       setStackBy("service");
       setErr(e instanceof ApiError ? e.message : "Falha ao carregar Cost Management.");
     } finally {
@@ -723,76 +720,27 @@ export function CostManagementPage() {
         .join(" · ")
     : undefined;
 
-  /** Account pill: editable on Consumption (org-wide); locked to the connection elsewhere. */
-  const accountEditable = tab === "Consumption";
-  const accountOptions: { value: string; label: string }[] = (() => {
-    if (accountFilter === PENDING_ACCOUNT) {
-      return [{ value: PENDING_ACCOUNT, label: relatedLabel }];
-    }
-    if (!accountEditable) return [{ value: accountFilter, label: relatedLabel }];
-    const list = accountsWithRelated(
-      orgAccounts,
-      relatedAccount ?? null,
-      activeConn?.account_identifier,
-    );
-    return [
-      { value: ALL_ACCOUNTS, label: "All Accounts" },
-      ...(accountFilter === UNKNOWN_ACCOUNT
-        ? [{ value: UNKNOWN_ACCOUNT, label: "Conta não identificada" }]
-        : []),
-      ...list.map((n) => ({ value: n, label: n })),
-    ];
-  })();
-  const accountSelectValue =
-    accountEditable && accountOptions.some((o) => o.value === accountFilter)
-      ? accountFilter
-      : accountOptions.find((o) => sameAccount(o.value, accountFilter))?.value ??
-        accountOptions[0]?.value ??
-        "";
-
-  const connectionPair = activeConn ? (
-    <>
-      <span className="account-chip">
-        <select
-          className="account-chip-select"
-          value={String(connectionId)}
-          onChange={(e) => selectConnection(Number(e.target.value))}
-          aria-label="Connection"
-        >
-          {connections.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </span>
-      <span
-        className={`account-chip account-chip-all${
-          accountFilter === PENDING_ACCOUNT ||
-          accountFilter === UNKNOWN_ACCOUNT ||
-          (!accountEditable && relatedAccount === null)
-            ? " is-unresolved"
-            : ""
-        }`}
-        title={[accountHint, tab === "Consumption" ? orgAccountsNote : null]
-          .filter(Boolean)
-          .join("\n")}
+  /** Connection picker only — Snowflake account is derived from the connection (no redundant locator UI). */
+  const connectionSelect = activeConn ? (
+    <span
+      className="account-chip"
+      title={[accountHint, tab === "Consumption" ? orgAccountsNote : null]
+        .filter(Boolean)
+        .join("\n")}
+    >
+      <select
+        className="account-chip-select"
+        value={String(connectionId)}
+        onChange={(e) => selectConnection(Number(e.target.value))}
+        aria-label="Connection"
       >
-        <select
-          className="account-chip-select"
-          value={accountSelectValue}
-          onChange={(e) => setAccountPick({ connId: connectionId, value: e.target.value })}
-          disabled={!accountEditable || accountFilter === PENDING_ACCOUNT}
-          aria-label="Account"
-        >
-          {accountOptions.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </span>
-    </>
+        {connections.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+    </span>
   ) : null;
 
   const headerCreditsUsed =
@@ -825,7 +773,7 @@ export function CostManagementPage() {
             {tab === "Consumption" ? (
               <>
                 <DateRangePicker value={dateRange} onChange={setDateRange} />
-                {connectionPair}
+                {connectionSelect}
                 <FilterPill
                   label="Tags"
                   value="N/A"
@@ -859,7 +807,7 @@ export function CostManagementPage() {
               </>
             ) : (
               <>
-                {connectionPair}
+                {connectionSelect}
                 {showTimeNonConsumption ? (
                   <FilterPill
                     label="Time Range"

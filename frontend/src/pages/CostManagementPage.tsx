@@ -795,7 +795,6 @@ export function CostManagementPage() {
           contextLabel={warehousePill}
           creditsUsed={headerCreditsUsed}
           updatedAt={tab === "Performance" ? perf?.fetched_at : null}
-          updatedCached={tab === "Performance" ? Boolean(perf?.cached) : false}
         />
         <CostTabs tab={tab} onTab={setTab} />
       </div>

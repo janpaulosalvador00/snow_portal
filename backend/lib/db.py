@@ -548,44 +548,50 @@ def update_team(team_id: int, name: str) -> bool:
         return cur.rowcount > 0
 
 
-def list_connections_for_user(user: dict) -> list[dict]:
+def list_connections_for_user(user: dict, *, active_only: bool = False) -> list[dict]:
     """Connections visible to ``user``.
 
     ACL contract for ``connections.team_id``:
       - NULL  → Todos (no team restriction; visible to any authenticated user)
       - int   → primary team; also visible via ``connection_acl`` or ``created_by``
     Admins see every connection.
+
+    ``is_active`` is durable availability (in use vs archived), independent of which
+    connection the client selected as the current environment. When ``active_only``
+    is True, archived rows are omitted (FinOps selectors / auto-refresh).
     """
+    active_clause = " AND c.is_active = TRUE" if active_only else ""
     with db_cursor() as cur:
         if user["role"] == "admin":
             cur.execute(
-                """
+                f"""
                 SELECT c.id, c.name, c.account_identifier, c.username,
                        c.auth_method, c.authenticator_url,
                        c.warehouse, c.role_name, c.refresh_interval,
-                       c.team_id, c.created_at,
+                       c.is_active, c.team_id, c.created_at,
                        t.name AS team_name
                 FROM connections c
                 LEFT JOIN teams t ON t.id = c.team_id
-                ORDER BY c.name
+                WHERE TRUE{active_clause}
+                ORDER BY c.is_active DESC, c.name
                 """
             )
         else:
             cur.execute(
-                """
+                f"""
                 SELECT DISTINCT c.id, c.name, c.account_identifier, c.username,
                        c.auth_method, c.authenticator_url,
                        c.warehouse, c.role_name, c.refresh_interval,
-                       c.team_id, c.created_at,
+                       c.is_active, c.team_id, c.created_at,
                        t.name AS team_name
                 FROM connections c
                 LEFT JOIN teams t ON t.id = c.team_id
                 LEFT JOIN connection_acl a ON a.connection_id = c.id
-                WHERE c.team_id IS NULL
+                WHERE (c.team_id IS NULL
                    OR c.team_id = %s
                    OR a.team_id = %s
-                   OR c.created_by = %s
-                ORDER BY c.name
+                   OR c.created_by = %s){active_clause}
+                ORDER BY c.is_active DESC, c.name
                 """,
                 (user.get("team_id"), user.get("team_id"), user["id"]),
             )
@@ -596,6 +602,28 @@ def get_connection_by_id(connection_id: int) -> dict | None:
     with db_cursor() as cur:
         cur.execute("SELECT * FROM connections WHERE id = %s", (connection_id,))
         return cur.fetchone()
+
+
+def set_connection_active(connection_id: int, is_active: bool) -> dict:
+    """Mark a connection as in use (True) or archived / no longer used (False).
+
+    This does not select the connection as the client's current environment —
+    that remains a separate client-side concept.
+    """
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE connections
+            SET is_active = %s, updated_at = NOW()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (bool(is_active), connection_id),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise ValueError("Conexão não encontrada.")
+    return row
 
 
 def get_connection_credentials(connection_id: int) -> dict:

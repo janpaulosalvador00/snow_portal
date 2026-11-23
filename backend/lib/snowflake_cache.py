@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
@@ -16,6 +17,11 @@ from backend.lib.snowflake_client import discover_session_options_with_creds
 logger = logging.getLogger(__name__)
 
 Fetcher = Callable[[dict, dict], dict]
+
+# Stale windowed GETs return Postgres immediately; Snowflake refresh runs here.
+_revalidate_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cache-revalidate")
+_revalidate_inflight: set[tuple[int, str, str]] = set()
+_revalidate_lock = threading.Lock()
 
 
 def _window(params: dict) -> dict:
@@ -192,6 +198,32 @@ def _is_stale(dataset: str, params: dict, fetched_at: datetime) -> bool:
     return now - fetched_at > _LIVE_TTL
 
 
+def _revalidate_async(connection_id: int, dataset: str, params: dict) -> None:
+    """Refresh a stale windowed row without blocking the request that served the snapshot."""
+    key = params_key(params)
+    job = (connection_id, dataset, key)
+    with _revalidate_lock:
+        if job in _revalidate_inflight:
+            return
+        _revalidate_inflight.add(job)
+
+    def _run() -> None:
+        try:
+            cached_fetch(connection_id, dataset, params, force=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "background revalidate %s %s failed: %s",
+                connection_id,
+                dataset,
+                str(exc)[:200],
+            )
+        finally:
+            with _revalidate_lock:
+                _revalidate_inflight.discard(job)
+
+    _revalidate_pool.submit(_run)
+
+
 def cached_fetch(
     connection_id: int,
     dataset: str,
@@ -200,13 +232,19 @@ def cached_fetch(
     creds: dict | None = None,
     force: bool = False,
 ) -> dict:
-    """Serve from Postgres unless missing or forced; then query Snowflake and store."""
+    """Serve from Postgres on open; Snowflake only when missing or ``force`` (↻ / refresh).
+
+    Windowed datasets older than ``_LIVE_TTL`` still return the snapshot immediately and
+    revalidate in the background so Cost Management tabs are not empty while Snowflake runs.
+    """
     params = params or {}
     key = params_key(params)
     hit = None
     if not force:
         hit = db.get_cache(connection_id, dataset, key)
-        if hit is not None and not _is_stale(dataset, params, hit["fetched_at"]):
+        if hit is not None:
+            if _is_stale(dataset, params, hit["fetched_at"]):
+                _revalidate_async(connection_id, dataset, params)
             return _with_meta(hit["payload"], hit["fetched_at"], True)
 
     if creds is None:

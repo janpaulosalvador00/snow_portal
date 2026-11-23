@@ -533,7 +533,6 @@ export function CostManagementPage() {
     setAccountPick({ connId: "", value: PENDING_ACCOUNT });
     setConnectionId(id);
     setActiveConnectionId(id === "" ? null : id);
-    setPerfWarehouse("All");
     setPerfDay(null);
   }
 

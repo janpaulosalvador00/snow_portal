@@ -46,7 +46,8 @@ export default function App() {
               <Route path="/" element={<HubPage />} />
               <Route path="/conexoes" element={<ConnectionsPage />} />
               <Route path="/tokens" element={<TokensPage />} />
-              <Route path="/cost-management" element={<CostManagementPage />} />
+              {/* `/*` keeps nested Cost URLs from hitting the catch-all → Início */}
+              <Route path="/cost-management/*" element={<CostManagementPage />} />
               <Route path="/alerts" element={<AlertsPage />} />
               <Route path="/admin" element={<AdminGate />} />
               <Route path="/canais" element={<ChannelsGate />} />

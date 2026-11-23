@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   api,
@@ -13,6 +13,9 @@ import {
   CostPageHeader,
   CostSkeleton,
   CostTabs,
+  DEFAULT_COST_TAB,
+  tabFromSlug,
+  tabToSlug,
   type CostTab,
 } from "../components/cost/CostChrome";
 import { CreditsTable } from "../components/cost/CreditsTable";
@@ -212,6 +215,9 @@ const DEFAULT_SERVICE_OPTIONS: FilterPillOption[] = [
 ];
 
 export function CostManagementPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [connections, setConnections] = useState<Conn[]>([]);
   const [connectionId, setConnectionId] = useState<number | "">(getActiveConnectionId() ?? "");
   const [dateRange, setDateRange] = useState<DateRangeValue>({ mode: "preset", days: 7 });
@@ -247,10 +253,42 @@ export function CostManagementPage() {
   const [org, setOrg] = useState<OrgResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<CostTab>("Consumption");
+  /** Path segment after `/cost-management/` (legacy / deep-link form). */
+  const pathTabSlug =
+    location.pathname
+      .replace(/^\/cost-management\/?/i, "")
+      .split("/")
+      .filter(Boolean)[0] ?? null;
+  /** Active Cost tab — `?tab=` first, then path, so F5 keeps the same guia. */
+  const tab =
+    tabFromSlug(searchParams.get("tab")) ??
+    tabFromSlug(pathTabSlug) ??
+    DEFAULT_COST_TAB;
+  const writeTabUrl = (next: CostTab) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("tab", tabToSlug(next));
+    const search = params.toString();
+    navigate(
+      { pathname: "/cost-management", search: search ? `?${search}` : "" },
+      { replace: true },
+    );
+  };
+  const setTab = (next: CostTab) => {
+    writeTabUrl(next);
+  };
   const loadAbortRef = useRef<AbortController | null>(null);
   const skipConnListRefresh = useRef(true);
   const { refreshToken, refreshError } = useRefresh();
+
+  // Canonicalize to `/cost-management?tab=<slug>` (fixes missing/invalid + path deep-links).
+  useEffect(() => {
+    const canonical = tabToSlug(tab);
+    const raw = searchParams.get("tab");
+    const onBasePath = /^\/cost-management\/?$/i.test(location.pathname);
+    if (raw === canonical && onBasePath) return;
+    writeTabUrl(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-sync when URL pieces change
+  }, [location.pathname, searchParams, tab]);
 
   /** Keep warehouse pill in sync with Conexões (saved `connection.warehouse`). */
   function reloadConnections(opts?: { syncActive?: boolean }) {

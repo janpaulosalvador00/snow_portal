@@ -11,7 +11,10 @@ import {
 import { api, ApiError } from "../api/client";
 import {
   CONNECTIONS_GLOBAL_INTERVAL_KEY,
+  CONNECTIONS_LAST_REFRESHED_KEY,
+  computeNextRefreshAt,
   loadGlobalInterval,
+  loadLastRefreshedAt,
 } from "../connections/refreshIntervals";
 
 type RefreshResult = {
@@ -87,12 +90,17 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
   const [refreshToken, setRefreshToken] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState<RefreshProgress>(null);
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAtState] = useState<string | null>(loadLastRefreshedAt);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [globalInterval, setGlobalIntervalState] = useState(loadGlobalInterval);
   const [schedules, setSchedules] = useState<ConnRow[]>([]);
   const [scheduleTick, setScheduleTick] = useState(0);
   const inFlight = useRef<Promise<void> | null>(null);
+
+  const setLastRefreshedAt = useCallback((iso: string) => {
+    setLastRefreshedAtState(iso);
+    localStorage.setItem(CONNECTIONS_LAST_REFRESHED_KEY, iso);
+  }, []);
 
   const setGlobalInterval = useCallback((value: string) => {
     setGlobalIntervalState(value);
@@ -218,7 +226,7 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Auto-refresh: per-connection minutes, or Contas salvas global for NULL intervals.
-  // Missing refresh_interval → treat as Global. Desligada (0) skips global cohort only.
+  // null = Global cohort; 0 = Desligada (never schedule, even if Global is on); 1..60 = own timer.
   useEffect(() => {
     if (!schedules.length) return;
     const timers: number[] = [];
@@ -237,6 +245,7 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
 
     for (const conn of schedules) {
       const minutes = conn.refresh_interval;
+      // Skip Global (null) and Desligada (0) — only positive minutes get a dedicated timer.
       if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) continue;
       timers.push(
         window.setInterval(() => {
@@ -248,13 +257,11 @@ export function RefreshProvider({ children }: { children: ReactNode }) {
     return () => timers.forEach((t) => window.clearInterval(t));
   }, [schedules, globalInterval, refreshAll]);
 
-  const nextGlobalRefreshAt = useMemo(() => {
-    const globalSeconds = Number(globalInterval);
-    if (!(globalSeconds > 0) || !lastRefreshedAt) return null;
-    const base = Date.parse(lastRefreshedAt);
-    if (Number.isNaN(base)) return null;
-    return new Date(base + globalSeconds * 1000).toISOString();
-  }, [globalInterval, lastRefreshedAt]);
+  // Same formula as AlertsPage: last && globalSeconds → last + interval.
+  const nextGlobalRefreshAt = useMemo(
+    () => computeNextRefreshAt(lastRefreshedAt, Number(globalInterval)),
+    [globalInterval, lastRefreshedAt],
+  );
 
   const value = useMemo(
     () => ({

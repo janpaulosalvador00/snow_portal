@@ -1,6 +1,8 @@
 /** Shared Contas salvas / per-connection auto-refresh interval helpers. */
 
 export const CONNECTIONS_GLOBAL_INTERVAL_KEY = "snow_portal_connections_global_interval";
+/** ISO timestamp of last Contas salvas / ↻ refresh (same role as Alerts `fetched_at`). */
+export const CONNECTIONS_LAST_REFRESHED_KEY = "snow_portal_connections_last_refreshed_at";
 
 /** localStorage values in seconds (same shape as AlertsPage). */
 export const GLOBAL_INTERVAL_OPTIONS = [
@@ -28,6 +30,24 @@ export type ConnIntervalValue = (typeof CONN_INTERVAL_OPTIONS)[number][0];
 
 export function loadGlobalInterval(): string {
   return localStorage.getItem(CONNECTIONS_GLOBAL_INTERVAL_KEY) || "1800";
+}
+
+export function loadLastRefreshedAt(): string | null {
+  return localStorage.getItem(CONNECTIONS_LAST_REFRESHED_KEY);
+}
+
+/**
+ * Next auto-refresh instant — same formula as AlertsPage header:
+ * `last && globalSeconds ? last + globalSeconds : null`.
+ */
+export function computeNextRefreshAt(
+  lastIso: string | null,
+  globalSeconds: number,
+): string | null {
+  if (!lastIso || !(globalSeconds > 0)) return null;
+  const base = Date.parse(lastIso);
+  if (Number.isNaN(base)) return null;
+  return new Date(base + globalSeconds * 1000).toISOString();
 }
 
 export function intervalToSelectValue(minutes: number | null | undefined): ConnIntervalValue {

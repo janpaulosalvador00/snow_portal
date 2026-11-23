@@ -5,9 +5,9 @@ import {
 import { useRefresh } from "./RefreshContext";
 
 /**
- * Contas salvas — Última / Próxima atualização + intervalo Global (localStorage).
- * Mount on ConnectionsPage hub tab, above the connections grid:
- *   {tab === "hub" ? <GlobalRefreshBar /> : null}
+ * Contas salvas — Última / Próxima + intervalo Global.
+ * Timestamps mirror AlertsPage: last from refresh (`refreshed_at` / localStorage),
+ * next = last + globalSeconds when Global > 0; "desligado" only when Global is 0.
  */
 export function GlobalRefreshBar() {
   const {
@@ -16,7 +16,15 @@ export function GlobalRefreshBar() {
     globalInterval,
     setGlobalInterval,
   } = useRefresh();
-  const off = Number(globalInterval) <= 0;
+  const globalSeconds = Number(globalInterval);
+  const off = !(globalSeconds > 0);
+  // Alerts: next ? dateTimeLabel(next) : "Auto desligada" — but only when off here,
+  // so a linked Global never reads as desligado before the first refresh.
+  const nextLabel = off
+    ? "— (auto-refresh desligado)"
+    : nextGlobalRefreshAt
+      ? dateTimeLabel(nextGlobalRefreshAt)
+      : "—";
 
   return (
     <div
@@ -35,11 +43,7 @@ export function GlobalRefreshBar() {
         </div>
         <div className="row">
           <span className="lbl">Próxima atualização</span>
-          <span className="val val-next">
-            {off || !nextGlobalRefreshAt
-              ? "— (auto-refresh desligado)"
-              : dateTimeLabel(nextGlobalRefreshAt)}
-          </span>
+          <span className="val val-next">{nextLabel}</span>
         </div>
       </div>
       <label className="global-refresh-field">

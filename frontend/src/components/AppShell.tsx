@@ -171,9 +171,14 @@ export function AppShell() {
         <div className="sidebar-top">
           <div className="brand" title={sidebarCollapsed ? "Snow Portal" : undefined}>
             <span className="brand-full">Snow Portal</span>
-            <span className="brand-mark" aria-hidden="true">
-              SP
-            </span>
+            <img
+              className="brand-mark"
+              src="/favicon.svg"
+              alt=""
+              aria-hidden="true"
+              width={32}
+              height={32}
+            />
           </div>
           <button
             type="button"

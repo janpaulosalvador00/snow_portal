@@ -157,8 +157,10 @@ h3 {
 
 .app-shell.sidebar-collapsed .brand-mark {
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
+  max-width: 20px;
+  max-height: 20px;
   object-fit: contain;
 }
 

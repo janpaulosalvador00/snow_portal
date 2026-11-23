@@ -176,8 +176,8 @@ export function AppShell() {
               src="/favicon.svg"
               alt=""
               aria-hidden="true"
-              width={32}
-              height={32}
+              width={20}
+              height={20}
             />
           </div>
           <button

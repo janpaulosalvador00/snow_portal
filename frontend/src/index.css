@@ -3684,6 +3684,98 @@ body.modal-open {
   gap: 0.5rem;
 }
 
+/* Diagnóstico por warehouse: nome usa o fr; FILA/STATUS compactos. */
+.perf-table.perf-wh-table .table-head,
+.perf-table.perf-wh-table .table-row {
+  grid-template-columns: minmax(0, 1fr) 5rem 2.75rem;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.perf-wh-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.perf-wh-fila {
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.perf-wh-status {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.perf-status-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+  line-height: 0;
+}
+
+.perf-status-btn:hover,
+.perf-status-btn:focus-visible {
+  outline: none;
+  border-color: #5a6570;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.perf-status-btn.ok {
+  color: #3dd68c;
+  border-color: #2a5a40;
+  background: #122018;
+}
+
+.perf-status-btn.warn {
+  color: #f5a524;
+  border-color: #5a4520;
+  background: #221a10;
+}
+
+.perf-status-btn.bad {
+  color: #f07178;
+  border-color: #5a3038;
+  background: #201216;
+}
+
+.perf-status-btn.neutral {
+  color: var(--muted);
+}
+
+.perf-status-glyph {
+  display: block;
+}
+
+.perf-status-dash {
+  font-size: 0.95rem;
+  line-height: 1;
+  font-weight: 600;
+}
+
+.perf-status-modal {
+  width: min(420px, 100%);
+}
+
+.perf-status-modal-body {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
 /* Até 5 warehouses: altura natural. Acima de 5: rolagem interna (~5 linhas). */
 .perf-wh-scroll {
   --perf-wh-row-h: 2.6rem;

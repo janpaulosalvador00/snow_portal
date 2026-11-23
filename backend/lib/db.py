@@ -264,6 +264,34 @@ def ensure_schema() -> None:
             ON snowflake_cache(connection_id, last_accessed_at)
             """
         )
+        # Append-only successful refresh log (manual or auto). Never UPDATE rows.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS connection_refresh_history (
+                id                  BIGSERIAL PRIMARY KEY,
+                connection_id       INT REFERENCES connections(id) ON DELETE SET NULL,
+                user_id             INT REFERENCES users(id) ON DELETE SET NULL,
+                last_refresh_at     TIMESTAMPTZ NOT NULL,
+                next_refresh_at     TIMESTAMPTZ,
+                interval_minutes    INTEGER,
+                scope               VARCHAR(16) NOT NULL DEFAULT 'connection'
+                                    CHECK (scope IN ('connection', 'global')),
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_connection_refresh_history_conn_at
+            ON connection_refresh_history(connection_id, last_refresh_at DESC)
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_connection_refresh_history_created
+            ON connection_refresh_history(created_at DESC)
+            """
+        )
         cur.execute(CONNECTION_TOKENS_DDL)
         cur.execute("ALTER TABLE connection_tokens ADD COLUMN IF NOT EXISTS source VARCHAR(16)")
         cur.execute(
@@ -1529,3 +1557,167 @@ def notification_delivery_kpis() -> dict:
             "failures_24h": int(row.get("failures_24h") or 0),
             "delivered_today": int(row.get("delivered_today") or 0),
         }
+
+REFRESH_HISTORY_SCOPES = ("connection", "global")
+
+
+def _normalize_refresh_history_scope(scope: str) -> str:
+    value = (scope or "connection").strip().lower()
+    if value not in REFRESH_HISTORY_SCOPES:
+        raise ValueError("scope inválido. Use 'connection' ou 'global'.")
+    return value
+
+
+def insert_connection_refresh_history(
+    *,
+    connection_id: int | None = None,
+    user_id: int | None = None,
+    last_refresh_at: datetime | None = None,
+    next_refresh_at: datetime | None = None,
+    interval_minutes: int | None = None,
+    scope: str = "connection",
+) -> dict:
+    """Append one successful refresh event. Never updates existing rows."""
+    scope_norm = _normalize_refresh_history_scope(scope)
+    if scope_norm == "connection" and connection_id is None:
+        raise ValueError("connection_id é obrigatório quando scope='connection'.")
+    if interval_minutes is not None:
+        if isinstance(interval_minutes, bool) or not isinstance(interval_minutes, int):
+            raise ValueError("interval_minutes inválido.")
+        if interval_minutes < 0 or interval_minutes > 60:
+            raise ValueError("interval_minutes deve ser null, 0 ou 1..60.")
+
+    when = last_refresh_at or datetime.now(timezone.utc)
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO connection_refresh_history (
+                connection_id, user_id, last_refresh_at, next_refresh_at,
+                interval_minutes, scope
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, connection_id, user_id, last_refresh_at, next_refresh_at,
+                      interval_minutes, scope, created_at
+            """,
+            (
+                connection_id,
+                user_id,
+                when,
+                next_refresh_at,
+                interval_minutes,
+                scope_norm,
+            ),
+        )
+        return dict(cur.fetchone())
+
+
+def list_connection_refresh_history(
+    user: dict,
+    *,
+    connection_id: int | None = None,
+    scope: str | None = None,
+    limit: int = 50,
+    from_at: datetime | None = None,
+    to_at: datetime | None = None,
+) -> list[dict]:
+    """List refresh history visible to the user (ACL on connection_id).
+
+    Global rows (scope='global', connection_id NULL) are visible to any
+    authenticated user. Connection-scoped rows require access to that connection.
+    """
+    limit = max(1, min(int(limit or 50), 500))
+    scope_norm = _normalize_refresh_history_scope(scope) if scope else None
+
+    if user.get("role") == "admin":
+        allowed_ids: list[int] | None = None
+    else:
+        allowed_ids = [c["id"] for c in list_connections_for_user(user)]
+
+    if connection_id is not None:
+        if allowed_ids is not None and connection_id not in allowed_ids:
+            return []
+        allowed_ids = [connection_id]
+
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if allowed_ids is None:
+        if connection_id is not None:
+            clauses.append("h.connection_id = %s")
+            params.append(connection_id)
+    else:
+        if connection_id is not None:
+            clauses.append("h.connection_id = %s")
+            params.append(connection_id)
+        elif allowed_ids:
+            clauses.append("(h.connection_id IS NULL OR h.connection_id = ANY(%s))")
+            params.append(allowed_ids)
+        else:
+            clauses.append("h.connection_id IS NULL")
+
+    if scope_norm:
+        clauses.append("h.scope = %s")
+        params.append(scope_norm)
+    if from_at is not None:
+        clauses.append("h.last_refresh_at >= %s")
+        params.append(from_at)
+    if to_at is not None:
+        clauses.append("h.last_refresh_at <= %s")
+        params.append(to_at)
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+
+    with db_cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT h.id, h.connection_id, h.user_id, h.last_refresh_at,
+                   h.next_refresh_at, h.interval_minutes, h.scope, h.created_at,
+                   c.name AS connection_name
+            FROM connection_refresh_history h
+            LEFT JOIN connections c ON c.id = h.connection_id
+            {where}
+            ORDER BY h.last_refresh_at DESC, h.id DESC
+            LIMIT %s
+            """,
+            params,
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def record_successful_connection_refresh(
+    connection_id: int,
+    *,
+    user_id: int | None = None,
+    last_refresh_at: datetime | None = None,
+    next_refresh_at: datetime | None = None,
+    interval_minutes: int | None = None,
+    scope: str = "connection",
+) -> dict | None:
+    """Best-effort history insert after a successful connection refresh."""
+    try:
+        when = last_refresh_at or datetime.now(timezone.utc)
+        interval = interval_minutes
+        if interval is None:
+            row = get_connection_by_id(connection_id)
+            if row is not None:
+                interval = row.get("refresh_interval")
+
+        next_at = next_refresh_at
+        if next_at is None and isinstance(interval, int) and interval > 0:
+            next_at = when + timedelta(minutes=interval)
+
+        return insert_connection_refresh_history(
+            connection_id=connection_id,
+            user_id=user_id,
+            last_refresh_at=when,
+            next_refresh_at=next_at,
+            interval_minutes=interval,
+            scope=scope,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "connection_refresh_history insert failed for connection_id=%s",
+            connection_id,
+        )
+        return None

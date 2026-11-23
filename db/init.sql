@@ -95,6 +95,26 @@ CREATE TABLE IF NOT EXISTS snowflake_cache (
     PRIMARY KEY (connection_id, dataset, params_key)
 );
 
+-- Append-only log of successful data refreshes (manual or auto). Never UPDATE rows.
+CREATE TABLE IF NOT EXISTS connection_refresh_history (
+    id                  BIGSERIAL PRIMARY KEY,
+    connection_id       INT REFERENCES connections(id) ON DELETE SET NULL,
+    user_id             INT REFERENCES users(id) ON DELETE SET NULL,
+    last_refresh_at     TIMESTAMPTZ NOT NULL,
+    next_refresh_at     TIMESTAMPTZ,
+    -- Effective interval at record time: 0=off, null=followed Global, 1..60=fixed minutes.
+    interval_minutes    INTEGER,
+    scope               VARCHAR(16) NOT NULL DEFAULT 'connection'
+                        CHECK (scope IN ('connection', 'global')),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_connection_refresh_history_conn_at
+ON connection_refresh_history(connection_id, last_refresh_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_connection_refresh_history_created
+ON connection_refresh_history(created_at DESC);
+
 -- Connection secrets, one row per (connection, token_type). Value stays Fernet-encrypted;
 -- no FK so revoked rows survive connection deletion as an audit trail.
 CREATE TABLE IF NOT EXISTS connection_tokens (

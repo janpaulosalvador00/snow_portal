@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -66,6 +66,139 @@ function badgeClass(level: string): string {
   if (level === "bad") return "perf-badge bad";
   return "perf-badge neutral";
 }
+
+const STATUS_LEVEL_LABEL: Record<string, string> = {
+  ok: "ok",
+  warn: "atenção",
+  bad: "crítico",
+  neutral: "neutro",
+};
+
+function normalizeStatusLevel(level?: string | null): "ok" | "warn" | "bad" | "neutral" {
+  const v = (level || "").toLowerCase();
+  if (v === "ok" || v === "warn" || v === "bad") return v;
+  return "neutral";
+}
+
+function StatusIcon({ level }: { level: "ok" | "warn" | "bad" | "neutral" }) {
+  if (level === "neutral") {
+    return (
+      <span className="perf-status-dash" aria-hidden="true">
+        —
+      </span>
+    );
+  }
+  return (
+    <svg
+      className="perf-status-glyph"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {level === "ok" ? (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M8.5 12.5 11 15l4.5-5.5" />
+        </>
+      ) : null}
+      {level === "warn" ? (
+        <>
+          <path d="M12 3.5 21 19H3L12 3.5z" />
+          <path d="M12 9v4.5" />
+          <path d="M12 16.5h.01" />
+        </>
+      ) : null}
+      {level === "bad" ? (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="m9 9 6 6" />
+          <path d="m15 9-6 6" />
+        </>
+      ) : null}
+    </svg>
+  );
+}
+
+type StatusDetail = {
+  warehouse: string;
+  level: "ok" | "warn" | "bad" | "neutral";
+  text: string;
+};
+
+function WarehouseStatusButton({
+  warehouse,
+  recommendation,
+  onOpen,
+}: {
+  warehouse: string;
+  recommendation?: PerformanceRec | null;
+  onOpen: (detail: StatusDetail) => void;
+}) {
+  const level = normalizeStatusLevel(recommendation?.level);
+  const text = (recommendation?.text || "").trim() || "Sem recomendação clara";
+  const levelLabel = STATUS_LEVEL_LABEL[level];
+  const ariaLabel = `Status ${levelLabel} para ${warehouse}. Abrir recomendação.`;
+
+  return (
+    <button
+      type="button"
+      className={`perf-status-btn ${level}`}
+      aria-label={ariaLabel}
+      onClick={() => onOpen({ warehouse, level, text })}
+    >
+      <StatusIcon level={level} />
+    </button>
+  );
+}
+
+function RecommendationModal({
+  detail,
+  onClose,
+}: {
+  detail: StatusDetail;
+  onClose: () => void;
+}) {
+  const titleId = useId();
+  const levelLabel = STATUS_LEVEL_LABEL[detail.level];
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="admin-modal-backdrop perf-status-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className="admin-modal perf-status-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="admin-modal-head">
+          <div>
+            <h2 id={titleId}>Recomendação · {detail.warehouse}</h2>
+            <p className="admin-modal-lead">Status: {levelLabel}</p>
+          </div>
+          <button type="button" className="btn admin-modal-close" onClick={onClose} aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <p className="perf-status-modal-body">{detail.text}</p>
+      </div>
+    </div>
+  );
+}
+
 
 /** Short actionable labels for query hotspot signals. */
 const QUERY_REC_SHORT: Record<string, string> = {
@@ -150,6 +283,7 @@ export function PerformancePanel({
   loading?: boolean;
 }) {
   const [queryLimit, setQueryLimit] = useState("10");
+  const [statusDetail, setStatusDetail] = useState<StatusDetail | null>(null);
   const chartRows = (data.load_series ?? []).map((r) => ({
     date: shortDate(r.date),
     running: r.avg_running,
@@ -208,23 +342,27 @@ export function PerformancePanel({
             <div
               className={
                 data.warehouses.length > 5
-                  ? "table cost-table perf-table perf-wh-scroll"
-                  : "table cost-table perf-table"
+                  ? "table cost-table perf-table perf-wh-table perf-wh-scroll"
+                  : "table cost-table perf-table perf-wh-table"
               }
             >
               <div className="table-head">
                 <span>WAREHOUSE</span>
                 <span>FILA</span>
-                <span>RECOMENDAÇÃO</span>
+                <span>STATUS</span>
               </div>
               {data.warehouses.map((w) => (
                 <div key={w.warehouse_name} className="table-row">
-                  <span>{w.warehouse_name}</span>
-                  <span>{w.queue_label}</span>
-                  <span>
-                    <span className={badgeClass(w.recommendation?.level)}>
-                      {w.recommendation?.text || "—"}
-                    </span>
+                  <span className="perf-wh-name" title={w.warehouse_name}>
+                    {w.warehouse_name}
+                  </span>
+                  <span className="perf-wh-fila">{w.queue_label}</span>
+                  <span className="perf-wh-status">
+                    <WarehouseStatusButton
+                      warehouse={w.warehouse_name}
+                      recommendation={w.recommendation}
+                      onOpen={setStatusDetail}
+                    />
                   </span>
                 </div>
               ))}
@@ -311,6 +449,10 @@ export function PerformancePanel({
           <div className="info-box">Nenhuma query relevante no período.</div>
         )}
       </div>
+
+      {statusDetail ? (
+        <RecommendationModal detail={statusDetail} onClose={() => setStatusDetail(null)} />
+      ) : null}
     </div>
   );
 }

@@ -14,6 +14,21 @@ export type CostTab = (typeof TABS)[number];
 
 export { TABS };
 
+/** Default when `?tab=` is missing or unknown. */
+export const DEFAULT_COST_TAB: CostTab = "Consumption";
+
+/** URL slug for a Cost tab (`Performance` → `performance`). */
+export function tabToSlug(tab: CostTab): string {
+  return tab.toLowerCase().replace(/\s+/g, "-");
+}
+
+/** Resolve `?tab=` (or path segment) back to a Cost tab. */
+export function tabFromSlug(slug: string | null | undefined): CostTab | null {
+  if (!slug) return null;
+  const normalized = slug.trim().toLowerCase();
+  return TABS.find((t) => tabToSlug(t) === normalized) ?? null;
+}
+
 type Props = {
   tab: CostTab;
   onTab: (t: CostTab) => void;

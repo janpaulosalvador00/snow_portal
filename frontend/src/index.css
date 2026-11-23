@@ -3891,7 +3891,9 @@ body.modal-open {
 }
 
 .perf-kind-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
   max-width: 100%;
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
@@ -3902,10 +3904,40 @@ body.modal-open {
   border: 1px solid var(--border);
   color: var(--muted);
   background: #14181c;
+  vertical-align: middle;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.perf-kind-badge:hover:not(:disabled),
+.perf-kind-badge.is-open {
+  filter: brightness(1.12);
+}
+
+.perf-kind-badge:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.perf-kind-badge:focus-visible {
+  outline: 2px solid var(--accent, #29b5e8);
+  outline-offset: 1px;
+}
+
+.perf-kind-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: middle;
+  min-width: 0;
+}
+
+.perf-kind-edit-icon {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.perf-kind-badge.is-overridden {
+  box-shadow: inset 0 0 0 1px rgba(41, 181, 232, 0.35);
 }
 
 .perf-kind-badge.kind-streamlit {
@@ -3932,6 +3964,121 @@ body.modal-open {
   color: #8b939e;
   border-color: #2a2f36;
   background: #14181c;
+}
+
+.perf-kind-badge.kind-custom {
+  color: #9ec9b0;
+  border-color: #2a4638;
+  background: #121a16;
+}
+
+.perf-kind-menu {
+  position: fixed;
+  z-index: 80;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: #161b22;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  overflow: auto;
+  outline: none;
+}
+
+.perf-kind-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text, #e6edf3);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.perf-kind-option:hover,
+.perf-kind-option.active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.perf-kind-option.selected {
+  color: #29b5e8;
+}
+
+.perf-kind-option.is-reset {
+  margin-top: 0.2rem;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 4px 4px;
+  color: var(--muted);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.perf-kind-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  min-width: 10rem;
+}
+
+.perf-kind-custom-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.perf-kind-custom-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #0f1318;
+  color: var(--text, #e6edf3);
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.perf-kind-custom-input:focus {
+  outline: 1px solid #29b5e8;
+  border-color: #29b5e8;
+}
+
+.perf-kind-custom-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.perf-kind-custom-btn {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.perf-kind-custom-btn.is-primary {
+  color: #29b5e8;
+  border-color: #1a4a5c;
+  background: #0f1a22;
+}
+
+.perf-kind-custom-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 

@@ -1112,6 +1112,7 @@ export function CostManagementPage() {
             <PerformancePanel
               data={perf}
               loading={loading}
+              connectionId={connectionId}
               queryLimit={perfTop}
               onQueryLimit={(v) => setPerfTop(parseTopParam(v))}
               selectedDay={perfDay}

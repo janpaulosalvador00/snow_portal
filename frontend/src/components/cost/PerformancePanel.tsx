@@ -11,7 +11,13 @@ import {
   YAxis,
 } from "recharts";
 import { FilterPill } from "./FilterPill";
-import { classifyQueryKind } from "./queryKind";
+import { QueryKindBadge } from "./QueryKindBadge";
+import { classifyQueryKind, effectiveQueryKind } from "./queryKind";
+import {
+  loadQueryKindOverrides,
+  saveQueryKindOverride,
+  type QueryKindOverrideMap,
+} from "./queryKindOverrides";
 import { ariaSort, levelRank, queueLabelRank, sortIndicator, toggleSort, type SortDir } from "./tableSort";
 
 export type PerformanceRec = {
@@ -376,12 +382,18 @@ function queryDefaultDir(key: QuerySortKey): SortDir {
   return key === "exec" || key === "tempo" ? -1 : 1;
 }
 
-function compareQueries(a: QueryRow, b: QueryRow, key: QuerySortKey, dir: SortDir): number {
+function compareQueries(
+  a: QueryRow,
+  b: QueryRow,
+  key: QuerySortKey,
+  dir: SortDir,
+  resolveKind: (q: QueryRow) => string,
+): number {
   const mul = dir;
   switch (key) {
     case "tipo": {
-      const av = classifyQueryKind(a.query_type, a.query_preview);
-      const bv = classifyQueryKind(b.query_type, b.query_preview);
+      const av = resolveKind(a);
+      const bv = resolveKind(b);
       return mul * av.localeCompare(bv);
     }
     case "query":
@@ -409,6 +421,7 @@ function compareQueries(a: QueryRow, b: QueryRow, key: QuerySortKey, dir: SortDi
 export function PerformancePanel({
   data,
   loading,
+  connectionId,
   queryLimit,
   onQueryLimit,
   selectedDay,
@@ -416,6 +429,8 @@ export function PerformancePanel({
 }: {
   data: PerformanceResp;
   loading?: boolean;
+  /** Active Snowflake connection — scopes TIPO overrides in localStorage. */
+  connectionId: number;
   /** Top-N for queries — owned by Cost page (URL sync). */
   queryLimit: string;
   onQueryLimit: (value: string) => void;
@@ -424,6 +439,28 @@ export function PerformancePanel({
   onSelectedDay: (value: string | null) => void;
 }) {
   const [statusDetail, setStatusDetail] = useState<StatusDetail | null>(null);
+  const [kindOverrides, setKindOverrides] = useState<QueryKindOverrideMap>(() =>
+    loadQueryKindOverrides(connectionId),
+  );
+
+  useEffect(() => {
+    setKindOverrides(loadQueryKindOverrides(connectionId));
+  }, [connectionId]);
+
+  function resolveKind(q: QueryRow): string {
+    const key = q.pattern_key || q.sample_query_id;
+    return effectiveQueryKind(q.query_type, q.query_preview, key ? kindOverrides[key] : null);
+  }
+
+  function setKindOverride(q: QueryRow, next: string | null) {
+    const key = q.pattern_key || q.sample_query_id;
+    if (!key) return;
+    const auto = classifyQueryKind(q.query_type, q.query_preview);
+    const trimmed = (next || "").trim();
+    // Selecting the automatic kind clears the override (no stale "edited" mark).
+    const toSave = !trimmed || trimmed === auto ? null : trimmed;
+    setKindOverrides(saveQueryKindOverride(connectionId, key, toSave));
+  }
 
   // Drop day filter only when it falls outside the loaded window / series.
   useEffect(() => {
@@ -500,9 +537,11 @@ export function PerformancePanel({
   }
   const sortedQueries = useMemo(() => {
     const copy = [...allQueries];
-    copy.sort((a, b) => compareQueries(a, b, querySortKey, querySortDir));
+    copy.sort((a, b) => compareQueries(a, b, querySortKey, querySortDir, resolveKind));
     return copy;
-  }, [allQueries, querySortKey, querySortDir]);
+    // resolveKind closes over kindOverrides; include it explicitly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allQueries, querySortKey, querySortDir, kindOverrides]);
   const visibleQueries = sliceQueries(sortedQueries, queryLimit);
 
   const queriesTitle = selectedDay
@@ -729,16 +768,19 @@ export function PerformancePanel({
               {visibleQueries.map((q) => {
                 const warehouse = q.warehouse_name || "—";
                 const lastExec = formatLastExec(q.last_end_time);
-                const kind = classifyQueryKind(q.query_type, q.query_preview);
+                const rowKey = q.pattern_key || q.sample_query_id;
+                const override = rowKey ? kindOverrides[rowKey] : undefined;
+                const kind = resolveKind(q);
                 return (
-                  <div key={q.pattern_key || q.sample_query_id} className="table-row">
+                  <div key={rowKey} className="table-row">
                     <span className="perf-kind-cell">
-                      <span
-                        className={`perf-kind-badge kind-${kind.replace(/\s+/g, "-").toLowerCase()}`}
-                        title={q.query_type ? `QUERY_TYPE: ${q.query_type}` : undefined}
-                      >
-                        {kind}
-                      </span>
+                      <QueryKindBadge
+                        kind={kind}
+                        overridden={Boolean(override)}
+                        queryType={q.query_type}
+                        disabled={loading}
+                        onChange={(next) => setKindOverride(q, next)}
+                      />
                     </span>
                     <span className="perf-query-cell">
                       <div className="perf-preview" title={q.query_preview || undefined}>

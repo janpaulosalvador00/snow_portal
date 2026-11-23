@@ -29,14 +29,18 @@ CREATE TABLE IF NOT EXISTS connections (
     role_name           VARCHAR(200),
     -- Auto-refresh minutes: NULL=Global, 0=Desligada, 1..60=fixed.
     refresh_interval    INTEGER,
+    -- Durable availability: TRUE = in use / available; FALSE = archived / no longer used.
+    -- Independent of which connection is selected as the current environment (client-side).
+    is_active           BOOLEAN NOT NULL DEFAULT TRUE,
     created_by          INT REFERENCES users(id) ON DELETE SET NULL,
     team_id             INT REFERENCES teams(id) ON DELETE SET NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Idempotent for DBs created before refresh_interval existed.
+-- Idempotent for DBs created before refresh_interval / is_active existed.
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS refresh_interval INTEGER;
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS connection_acl (
     connection_id   INT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
@@ -142,6 +146,7 @@ ON snowflake_cache(connection_id, last_accessed_at);
 CREATE INDEX IF NOT EXISTS idx_users_team ON users(team_id);
 CREATE INDEX IF NOT EXISTS idx_connections_team ON connections(team_id);
 CREATE INDEX IF NOT EXISTS idx_connections_account ON connections(account_identifier);
+CREATE INDEX IF NOT EXISTS idx_connections_is_active ON connections(is_active);
 CREATE INDEX IF NOT EXISTS idx_notification_channels_team ON notification_channels(team_id);
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_created
 ON notification_deliveries(created_at);

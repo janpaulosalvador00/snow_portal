@@ -3677,6 +3677,47 @@ body.modal-open {
   gap: 0.5rem;
 }
 
+/* Sortable header buttons for the performance tables (warehouses + queries). */
+.perf-th {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.perf-th:hover {
+  color: var(--text);
+}
+
+.perf-th.is-sorted {
+  color: var(--text);
+}
+
+.perf-th.perf-num {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.perf-sort-ind {
+  font-size: 0.62rem;
+  opacity: 0.45;
+}
+
+.perf-th.is-sorted .perf-sort-ind {
+  opacity: 0.9;
+  color: var(--accent);
+}
+
 /* Diagnóstico por warehouse: nome usa o fr; FILA/STATUS compactos. */
 .perf-table.perf-wh-table .table-head,
 .perf-table.perf-wh-table .table-row {

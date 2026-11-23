@@ -23,6 +23,9 @@ export type PerformanceResp = {
   start_date?: string;
   end_date?: string;
   note?: string | null;
+  /** When the performance snapshot was last fetched (cache or Snowflake). */
+  fetched_at?: string | null;
+  cached?: boolean;
   warehouse_filter?: string | null;
   warehouse_options?: string[];
   warehouses: {
@@ -68,6 +71,40 @@ function shortDate(iso: string): string {
   // YYYY-MM-DD → MM/DD
   if (iso.length >= 10) return `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
   return iso;
+}
+
+/** Format API `fetched_at` as pt-BR "dd/mm/aaaa hh:mm". */
+function formatFetchedAt(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function FetchedAtLabel({
+  fetchedAt,
+  cached,
+}: {
+  fetchedAt?: string | null;
+  cached?: boolean;
+}) {
+  const label = formatFetchedAt(fetchedAt);
+  if (!label) return null;
+  return (
+    <p
+      className="muted perf-fetched-at"
+      title={cached ? "Snapshot em cache" : "Atualizado agora"}
+    >
+      Executado em {label}
+      {cached ? " (cache)" : ""}
+    </p>
+  );
 }
 
 function sliceQueries<T>(rows: T[], limit: string): T[] {
@@ -141,8 +178,15 @@ export function PerformancePanel({
           <p className="muted perf-card-desc">
             Regras baseadas em WAREHOUSE_LOAD_HISTORY (docs Snowflake)
           </p>
+          <FetchedAtLabel fetchedAt={data.fetched_at} cached={data.cached} />
           {data.warehouses?.length ? (
-            <div className="table cost-table perf-table">
+            <div
+              className={
+                data.warehouses.length > 5
+                  ? "table cost-table perf-table perf-wh-scroll"
+                  : "table cost-table perf-table"
+              }
+            >
               <div className="table-head">
                 <span>WAREHOUSE</span>
                 <span>FILA</span>
@@ -176,6 +220,7 @@ export function PerformancePanel({
             <p className="muted perf-card-desc">
               Fonte: ACCOUNT_USAGE.QUERY_HISTORY · agrupamento por query_hash quando repetida
             </p>
+            <FetchedAtLabel fetchedAt={data.fetched_at} cached={data.cached} />
           </div>
           {allQueries.length ? (
             <FilterPill

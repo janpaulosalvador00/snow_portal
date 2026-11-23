@@ -24,9 +24,16 @@ type Props = {
   series: AnomalySeriesPoint[];
 };
 
+/** YYYY-MM-DD → DD/MM (pt-BR). */
+function shortDatePt(iso: string): string {
+  if (iso.length >= 10) return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+  return iso;
+}
+
 export function AnomalyLineChart({ series }: Props) {
   const data = series.map((p) => ({
     ...p,
+    dateLabel: shortDatePt(p.date),
     anomaly_y: p.is_anomaly ? p.credits : null,
   }));
 
@@ -35,13 +42,17 @@ export function AnomalyLineChart({ series }: Props) {
       <ResponsiveContainer width="100%" height={360}>
         <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" vertical={false} />
-          <XAxis dataKey="date" stroke="#8B939E" tick={{ fontSize: 11 }} minTickGap={28} />
+          <XAxis dataKey="dateLabel" stroke="#8B939E" tick={{ fontSize: 11 }} minTickGap={28} />
           <YAxis stroke="#8B939E" tick={{ fontSize: 12 }} />
           <Tooltip
             contentStyle={{
               background: "#1A1D21",
               border: "1px solid #2A2F36",
               borderRadius: 8,
+            }}
+            labelFormatter={(_, payload) => {
+              const iso = (payload?.[0]?.payload as { date?: string } | undefined)?.date;
+              return iso ? shortDatePt(iso) : "";
             }}
             formatter={(value, name) => {
               const n = typeof value === "number" ? value.toFixed(2) : String(value ?? "");

@@ -3,6 +3,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -40,6 +41,13 @@ export type PerformanceResp = {
     recommendation: PerformanceRec;
   }[];
   load_series: { date: string; avg_running: number; avg_queued_load: number }[];
+  /** Per warehouse × day load — used to filter Diagnóstico when a chart day is selected. */
+  warehouse_daily?: {
+    date: string;
+    warehouse_name: string;
+    avg_running: number;
+    avg_queued_load: number;
+  }[];
   queries: {
     pattern_key: string;
     query_preview: string;
@@ -234,10 +242,21 @@ function queryMeta(userName: string, patternKey: string): string {
   return hash ? `${user} · ${hash}` : user;
 }
 
+/** YYYY-MM-DD → DD/MM (pt-BR, never MM/DD). */
 function shortDate(iso: string): string {
-  // YYYY-MM-DD → MM/DD
-  if (iso.length >= 10) return `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
+  if (iso.length >= 10) return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
   return iso;
+}
+
+/** UTC calendar day (YYYY-MM-DD) from an ISO timestamp or date-only string. */
+function utcDay(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const trimmed = iso.trim();
+  // Date-only → already a UTC calendar day from the API.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
 }
 
 /** Format API `fetched_at` as pt-BR "dd/mm/aaaa hh:mm". */
@@ -259,15 +278,78 @@ function formatLastExec(iso: string | null | undefined): string | null {
   return formatFetchedAt(iso);
 }
 
+type WarehouseRow = PerformanceResp["warehouses"][number];
+type QueryRow = PerformanceResp["queries"][number];
+type WarehouseDailyRow = NonNullable<PerformanceResp["warehouse_daily"]>[number];
+
+const QUEUE_RATIO_HIGH = 0.15;
+const LOW_LOAD_MAX = 0.45;
+
+function queueLabel(meanQueued: number, queueShare: number): string {
+  if (meanQueued >= 0.1 || queueShare >= QUEUE_RATIO_HIGH) return "alta";
+  if (meanQueued >= 0.02 || queueShare >= 0.05) return "média";
+  return "baixa";
+}
+
+function recommendWarehouse(
+  meanRunning: number,
+  meanQueued: number,
+  daysWithQueue: number,
+  days: number,
+): PerformanceRec {
+  const total = meanRunning + meanQueued;
+  const queueShare = total > 1e-9 ? meanQueued / total : 0;
+  if (meanQueued > 0.05 && (queueShare >= QUEUE_RATIO_HIGH || daysWithQueue >= Math.max(2, Math.floor(days / 3)))) {
+    return {
+      level: "warn",
+      code: "upsize_or_multicluster",
+      text: "Fila recorrente — considerar aumentar o tamanho ou multi-cluster / separar workload",
+    };
+  }
+  if (total > 0 && total < LOW_LOAD_MAX && meanQueued < 0.02 && daysWithQueue <= 1) {
+    return {
+      level: "ok",
+      code: "downsize_candidate",
+      text: "Carga baixa e pouca fila — candidato a reduzir tamanho ou clusters",
+    };
+  }
+  return { level: "neutral", code: "none", text: "Sem recomendação clara" };
+}
+
+/** Build Diagnóstico rows for a single UTC day from warehouse_daily. */
+function warehousesForDay(
+  daily: WarehouseDailyRow[],
+  day: string,
+  sizeByName: Map<string, string | null | undefined>,
+): WarehouseRow[] {
+  const rows: WarehouseRow[] = [];
+  for (const r of daily) {
+    if (r.date !== day) continue;
+    const meanRunning = r.avg_running ?? 0;
+    const meanQueued = r.avg_queued_load ?? 0;
+    const total = meanRunning + meanQueued;
+    const share = total > 1e-9 ? meanQueued / total : 0;
+    const daysWithQueue = meanQueued > 0.02 ? 1 : 0;
+    rows.push({
+      warehouse_name: r.warehouse_name,
+      size: sizeByName.get(r.warehouse_name.toUpperCase()) ?? null,
+      mean_running: meanRunning,
+      mean_queued: meanQueued,
+      queue_label: queueLabel(meanQueued, share),
+      days_with_queue: daysWithQueue,
+      recommendation: recommendWarehouse(meanRunning, meanQueued, daysWithQueue, 1),
+    });
+  }
+  rows.sort((a, b) => b.mean_queued - a.mean_queued || b.mean_running - a.mean_running);
+  return rows;
+}
+
 function sliceQueries<T>(rows: T[], limit: string): T[] {
   if (limit === "all") return rows;
   const n = Number(limit);
   if (!Number.isFinite(n) || n <= 0) return rows.slice(0, 10);
   return rows.slice(0, n);
 }
-
-type WarehouseRow = PerformanceResp["warehouses"][number];
-type QueryRow = PerformanceResp["queries"][number];
 
 /** "Diagnóstico por warehouse" sortable columns. */
 type WhSortKey = "warehouse" | "fila" | "status";
@@ -361,12 +443,49 @@ export function PerformancePanel({
 }) {
   const [queryLimit, setQueryLimit] = useState("10");
   const [statusDetail, setStatusDetail] = useState<StatusDetail | null>(null);
-  const chartRows = (data.load_series ?? []).map((r) => ({
-    date: shortDate(r.date),
-    running: r.avg_running,
-    queued: r.avg_queued_load,
-  }));
-  const allQueries = data.queries ?? [];
+  /** Selected chart day (UTC ISO YYYY-MM-DD); null = full Time Range. */
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+
+  // Drop day filter when the loaded window / warehouse scope changes.
+  useEffect(() => {
+    setSelectedDay(null);
+  }, [data.start_date, data.end_date, data.warehouse_filter, data.days]);
+
+  const chartRows = useMemo(
+    () =>
+      (data.load_series ?? []).map((r) => ({
+        dateIso: r.date,
+        date: shortDate(r.date),
+        running: r.avg_running,
+        queued: r.avg_queued_load,
+      })),
+    [data.load_series],
+  );
+
+  function toggleDay(dayIso: string) {
+    setSelectedDay((prev) => (prev === dayIso ? null : dayIso));
+  }
+
+  const sizeByName = useMemo(() => {
+    const map = new Map<string, string | null | undefined>();
+    for (const w of data.warehouses ?? []) {
+      map.set(w.warehouse_name.toUpperCase(), w.size);
+    }
+    return map;
+  }, [data.warehouses]);
+
+  const filteredWarehouses = useMemo(() => {
+    if (!selectedDay) return data.warehouses ?? [];
+    const daily = data.warehouse_daily ?? [];
+    if (!daily.length) return [];
+    return warehousesForDay(daily, selectedDay, sizeByName);
+  }, [selectedDay, data.warehouses, data.warehouse_daily, sizeByName]);
+
+  const allQueries = useMemo(() => {
+    const rows = data.queries ?? [];
+    if (!selectedDay) return rows;
+    return rows.filter((q) => utcDay(q.last_end_time) === selectedDay);
+  }, [data.queries, selectedDay]);
 
   // Diagnóstico por warehouse: default matches the API's own worst-queue-first order.
   const [whSortKey, setWhSortKey] = useState<WhSortKey>("fila");
@@ -375,10 +494,10 @@ export function PerformancePanel({
     toggleSort(key, whSortKey, setWhSortKey, setWhSortDir, whDefaultDir);
   }
   const sortedWarehouses = useMemo(() => {
-    const copy = [...(data.warehouses ?? [])];
+    const copy = [...filteredWarehouses];
     copy.sort((a, b) => compareWarehouses(a, b, whSortKey, whSortDir));
     return copy;
-  }, [data.warehouses, whSortKey, whSortDir]);
+  }, [filteredWarehouses, whSortKey, whSortDir]);
 
   // Top queries do período: default matches the API's own slowest-first order.
   const [querySortKey, setQuerySortKey] = useState<QuerySortKey>("tempo");
@@ -392,6 +511,10 @@ export function PerformancePanel({
     return copy;
   }, [allQueries, querySortKey, querySortDir]);
   const visibleQueries = sliceQueries(sortedQueries, queryLimit);
+
+  const queriesTitle = selectedDay
+    ? `Top queries do dia ${shortDate(selectedDay)}`
+    : "Top queries do período";
 
   return (
     <div className={`cost-tab-body perf-panel${loading ? " is-refreshing" : ""}`}>
@@ -408,14 +531,42 @@ export function PerformancePanel({
       </h3>
       <div className="perf-grid">
         <div className="perf-card">
-          <h4>Carga e fila (por dia)</h4>
-          <p className="muted perf-card-desc">
-            Running = queries em execução · Queued = fila por sobrecarga
-          </p>
+          <div className="perf-card-head">
+            <div>
+              <h4>Carga e fila (por dia)</h4>
+              <p className="muted perf-card-desc">
+                Running = queries em execução · Queued = fila por sobrecarga · clique no dia para
+                filtrar
+              </p>
+            </div>
+            {selectedDay ? (
+              <button
+                type="button"
+                className="perf-day-chip"
+                onClick={() => setSelectedDay(null)}
+                aria-label={`Limpar filtro do dia ${shortDate(selectedDay)}`}
+              >
+                Dia: {shortDate(selectedDay)}
+                <span aria-hidden="true">×</span>
+              </button>
+            ) : null}
+          </div>
           {chartRows.length ? (
             <div className="chart-wrap cost-chart perf-load-chart">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartRows}>
+                <BarChart
+                  data={chartRows}
+                  style={{ cursor: "pointer" }}
+                  onClick={(state) => {
+                    const iso =
+                      (state?.activePayload?.[0]?.payload as { dateIso?: string } | undefined)
+                        ?.dateIso ??
+                      (typeof state?.activeLabel === "string"
+                        ? chartRows.find((r) => r.date === state.activeLabel)?.dateIso
+                        : undefined);
+                    if (iso) toggleDay(iso);
+                  }}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" vertical={false} />
                   <XAxis dataKey="date" stroke="#8B939E" tick={{ fontSize: 11 }} />
                   <YAxis stroke="#8B939E" tick={{ fontSize: 11 }} />
@@ -424,10 +575,38 @@ export function PerformancePanel({
                       background: "#1A1D21",
                       border: "1px solid #2A2F36",
                     }}
+                    labelFormatter={(_, payload) => {
+                      const iso = (payload?.[0]?.payload as { dateIso?: string } | undefined)?.dateIso;
+                      return iso ? shortDate(iso) : "";
+                    }}
                   />
                   <Legend />
-                  <Bar dataKey="running" name="Running" fill="#29B5E8" stackId="a" />
-                  <Bar dataKey="queued" name="Queued" fill="#f5a524" stackId="a" />
+                  <Bar dataKey="running" name="Running" fill="#29B5E8" stackId="a" cursor="pointer">
+                    {chartRows.map((entry) => {
+                      const active = selectedDay === entry.dateIso;
+                      const dimmed = Boolean(selectedDay) && !active;
+                      return (
+                        <Cell
+                          key={`run-${entry.dateIso}`}
+                          fill={active ? "#5ec8f0" : "#29B5E8"}
+                          fillOpacity={dimmed ? 0.35 : 1}
+                        />
+                      );
+                    })}
+                  </Bar>
+                  <Bar dataKey="queued" name="Queued" fill="#f5a524" stackId="a" cursor="pointer">
+                    {chartRows.map((entry) => {
+                      const active = selectedDay === entry.dateIso;
+                      const dimmed = Boolean(selectedDay) && !active;
+                      return (
+                        <Cell
+                          key={`q-${entry.dateIso}`}
+                          fill={active ? "#ffc15a" : "#f5a524"}
+                          fillOpacity={dimmed ? 0.35 : 1}
+                        />
+                      );
+                    })}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -437,11 +616,16 @@ export function PerformancePanel({
         </div>
 
         <div className="perf-card">
-          <h4>Diagnóstico por warehouse</h4>
-          {data.warehouses?.length ? (
+          <h4>
+            Diagnóstico por warehouse
+            {selectedDay ? (
+              <small className="perf-day-hint"> · {shortDate(selectedDay)}</small>
+            ) : null}
+          </h4>
+          {sortedWarehouses.length ? (
             <div
               className={
-                data.warehouses.length > 5
+                sortedWarehouses.length > 5
                   ? "table cost-table perf-table perf-wh-table perf-wh-scroll"
                   : "table cost-table perf-table perf-wh-table"
               }
@@ -482,7 +666,11 @@ export function PerformancePanel({
               ))}
             </div>
           ) : (
-            <div className="info-box">Nenhum warehouse com carga no período.</div>
+            <div className="info-box">
+              {selectedDay
+                ? "Nenhum warehouse com carga neste dia."
+                : "Nenhum warehouse com carga no período."}
+            </div>
           )}
         </div>
       </div>
@@ -491,13 +679,18 @@ export function PerformancePanel({
       <div className="perf-card">
         <div className="perf-queries-header">
           <div className="perf-queries-heading">
-            <h4>Top queries do período</h4>
+            <h4>{queriesTitle}</h4>
             <p className="muted perf-card-desc">
               Fonte: ACCOUNT_USAGE.QUERY_HISTORY · agrupamento por query_hash quando repetida
+              {selectedDay
+                ? " · filtro pelo dia da última execução (UTC)"
+                : ""}
             </p>
           </div>
           <div className="perf-queries-header-right">
-            {data.duration_buckets && data.duration_buckets.some((b) => b.query_count > 0) ? (
+            {!selectedDay &&
+            data.duration_buckets &&
+            data.duration_buckets.some((b) => b.query_count > 0) ? (
               <div className="perf-buckets" aria-label="Distribuição por duração">
                 {data.duration_buckets.map((b) => (
                   <div key={b.bucket} className="perf-bucket">
@@ -519,7 +712,7 @@ export function PerformancePanel({
           </div>
         </div>
         {allQueries.length ? (
-          <div className="perf-queries-scroll" role="region" aria-label="Top queries do período">
+          <div className="perf-queries-scroll" role="region" aria-label={queriesTitle}>
             <div className="table cost-table perf-table perf-queries">
               <div className="table-head" role="row">
                 {QUERY_COLUMNS.map((col) => {
@@ -586,7 +779,11 @@ export function PerformancePanel({
             </div>
           </div>
         ) : (
-          <div className="info-box">Nenhuma query relevante no período.</div>
+          <div className="info-box">
+            {selectedDay
+              ? "Nenhuma query com última execução neste dia."
+              : "Nenhuma query relevante no período."}
+          </div>
         )}
       </div>
 

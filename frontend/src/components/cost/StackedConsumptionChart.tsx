@@ -45,23 +45,25 @@ export function colorForIndex(index: number): string {
 }
 
 function formatAxis(period: string, grain: string): string {
-  // period may be YYYY-MM-DD or YYYY-MM
+  // period may be YYYY-MM-DD or YYYY-MM — always DD/MM (pt-BR), never MM/DD.
   const iso = period.length === 7 ? `${period}-01` : period.slice(0, 10);
   const d = new Date(`${iso}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return period;
   if (grain === "month") {
-    return d.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
+    return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit", timeZone: "UTC" });
   }
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${day}/${month}`;
 }
 
 function formatTooltipDate(period: string): string {
   const iso = period.length === 7 ? `${period}-01` : period.slice(0, 10);
   const d = new Date(`${iso}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return period;
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
+  return d.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
     year: "numeric",
     timeZone: "UTC",
   });

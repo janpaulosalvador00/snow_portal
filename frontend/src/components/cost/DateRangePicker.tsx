@@ -8,9 +8,6 @@ export type DateRangeValue =
 const PRESETS: { days: number; label: string }[] = [
   { days: 7, label: "Last 7 days" },
   { days: 28, label: "Last 28 days" },
-  { days: 90, label: "Last 3 months" },
-  { days: 180, label: "Last 6 months" },
-  { days: 365, label: "Last 12 months" },
 ];
 
 function toIso(d: Date): string {
@@ -25,12 +22,12 @@ function parseIso(iso: string): Date {
   return new Date(Date.UTC(y, m - 1, d));
 }
 
+/** DD/MM (pt-BR) — never MM/DD. */
 function formatShort(iso: string): string {
-  return parseIso(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  const d = parseIso(iso);
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${day}/${month}`;
 }
 
 function labelFor(value: DateRangeValue): string {
@@ -59,7 +56,7 @@ function MonthGrid({
 }) {
   const firstDow = new Date(Date.UTC(year, month0, 1)).getUTCDay();
   const total = daysInMonth(year, month0);
-  const title = new Date(Date.UTC(year, month0, 1)).toLocaleDateString("en-US", {
+  const title = new Date(Date.UTC(year, month0, 1)).toLocaleDateString("pt-BR", {
     month: "long",
     year: "numeric",
     timeZone: "UTC",

@@ -3805,21 +3805,20 @@ body.modal-open {
 
 .perf-queries .table-head,
 .perf-queries .table-row {
-  /* TIPO QUERY WH EXEC TEMPO DATA HORA SINAL — min widths enable horizontal scroll */
+  /* TIPO QUERY WH EXEC TEMPO DATA/HORA SINAL — min widths enable horizontal scroll */
   grid-template-columns:
     minmax(5.25rem, 0.55fr)
     minmax(12rem, 2.2fr)
     minmax(6rem, 0.95fr)
     minmax(3.25rem, 0.45fr)
     minmax(3.5rem, 0.55fr)
-    minmax(5.25rem, 0.55fr)
-    minmax(3.5rem, 0.45fr)
+    minmax(7.5rem, 0.75fr)
     minmax(4.5rem, 0.85fr);
   gap: 0.65rem;
   padding: 0.55rem 0.85rem;
   align-items: center;
   min-height: var(--perf-query-row-h, 3.6rem);
-  min-width: 50rem;
+  min-width: 48rem;
 }
 
 .perf-kind-cell {
@@ -3869,6 +3868,12 @@ body.modal-open {
   border-color: #2a2f36;
   background: #14181c;
 }
+
+
+
+
+
+
 
 .perf-queries .table-head > *,
 .perf-queries .table-row > * {

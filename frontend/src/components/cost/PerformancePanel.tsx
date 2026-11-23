@@ -253,22 +253,9 @@ function formatFetchedAt(iso: string | null | undefined): string | null {
   });
 }
 
-/** Split ISO timestamp into pt-BR date + time for Top queries columns. */
-function formatLastExecParts(iso: string | null | undefined): { date: string; time: string } | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return {
-    date: d.toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }),
-    time: d.toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-  };
+/** Format hotspot last_end_time as pt-BR "dd/mm/yyyy hh:mm". */
+function formatLastExec(iso: string | null | undefined): string | null {
+  return formatFetchedAt(iso);
 }
 
 function FetchedAtLabel({
@@ -437,14 +424,13 @@ export function PerformancePanel({
                 <span>WAREHOUSE</span>
                 <span className="perf-num">EXEC.</span>
                 <span className="perf-num">TEMPO</span>
-                <span className="perf-num">DATA</span>
-                <span className="perf-num">HORA</span>
+                <span className="perf-num">DATA/HORA</span>
                 <span>SINAL</span>
               </div>
               {visibleQueries.map((q) => {
                 const signal = querySignal(q.recommendation);
                 const warehouse = q.warehouse_name || "—";
-                const lastExec = formatLastExecParts(q.last_end_time);
+                const lastExec = formatLastExec(q.last_end_time);
                 const kind = classifyQueryKind(q.query_type, q.query_preview);
                 return (
                   <div key={q.pattern_key || q.sample_query_id} className="table-row">
@@ -470,10 +456,7 @@ export function PerformancePanel({
                     <span className="perf-num">{q.executions}</span>
                     <span className="perf-num">{q.total_elapsed_label}</span>
                     <span className="perf-num perf-datetime" title={q.last_end_time || undefined}>
-                      {lastExec?.date ?? "—"}
-                    </span>
-                    <span className="perf-num perf-datetime" title={q.last_end_time || undefined}>
-                      {lastExec?.time ?? "—"}
+                      {lastExec ?? "—"}
                     </span>
                     <span className="perf-signal-cell">
                       {signal ? (

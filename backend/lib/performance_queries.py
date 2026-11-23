@@ -154,6 +154,7 @@ def _privilege_payload(note: str, *, start: str, end: str, days: int) -> dict[st
         "note": note,
         "warehouses": [],
         "load_series": [],
+        "warehouse_daily": [],
         "queries": [],
         "duration_buckets": [],
     }
@@ -294,8 +295,9 @@ def performance(
         {"bucket": "gt_30m", "label": "> 30m", "query_count": buckets_map["gt_30m"]},
     ]
 
-    # Aggregate load series (all warehouses or filtered)
+    # Aggregate load series (all warehouses or filtered) + per-day WH rows for UI day filter
     load_series: list[dict[str, Any]] = []
+    warehouse_daily: list[dict[str, Any]] = []
     if not load_df.empty:
         daily = (
             load_df.groupby("usage_date", dropna=False)
@@ -311,6 +313,20 @@ def performance(
                     "date": date_str,
                     "avg_running": round(float(row["avg_running"] or 0), 4),
                     "avg_queued_load": round(float(row["avg_queued_load"] or 0), 4),
+                }
+            )
+        for _, row in load_df.iterrows():
+            d = row["usage_date"]
+            date_str = d.isoformat()[:10] if hasattr(d, "isoformat") else str(d)[:10]
+            name = str(row.get("warehouse_name") or "").strip()
+            if not name:
+                continue
+            warehouse_daily.append(
+                {
+                    "date": date_str,
+                    "warehouse_name": name,
+                    "avg_running": round(float(row.get("avg_running") or 0), 4),
+                    "avg_queued_load": round(float(row.get("avg_queued_load") or 0), 4),
                 }
             )
 
@@ -399,6 +415,7 @@ def performance(
         "warehouse_options": warehouse_names,
         "warehouses": warehouses,
         "load_series": load_series,
+        "warehouse_daily": warehouse_daily,
         "queries": queries,
         "duration_buckets": duration_buckets,
     }

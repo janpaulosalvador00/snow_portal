@@ -214,7 +214,7 @@ export function CostManagementPage() {
   const [searchParams] = useSearchParams();
   const [connections, setConnections] = useState<Conn[]>([]);
   const [connectionId, setConnectionId] = useState<number | "">(getActiveConnectionId() ?? "");
-  const [dateRange, setDateRange] = useState<DateRangeValue>({ mode: "preset", days: 7 });
+  const [dateRange, setDateRange] = useState<DateRangeValue>({ mode: "preset", days: 28 });
   const [usageType, setUsageType] = useState("Compute");
   const [grain, setGrain] = useState("day");
   const [serviceType, setServiceType] = useState(DEFAULT_SERVICE_TYPE);
@@ -858,9 +858,6 @@ export function CostManagementPage() {
                     options={[
                       { value: "7", label: "Last 7 days" },
                       { value: "28", label: "Last 28 days" },
-                      { value: "90", label: "Last 3 months" },
-                      { value: "180", label: "Last 6 months" },
-                      { value: "365", label: "Last 12 months" },
                     ]}
                   />
                 ) : null}
@@ -1016,7 +1013,11 @@ export function CostManagementPage() {
                   </div>
                   {anom.anomalies.map((r) => (
                     <div key={r.date} className="table-row">
-                      <span>{r.date}</span>
+                      <span>
+                        {r.date.length >= 10
+                          ? `${r.date.slice(8, 10)}/${r.date.slice(5, 7)}/${r.date.slice(0, 4)}`
+                          : r.date}
+                      </span>
                       <span>{r.credits.toFixed(2)} credits</span>
                       <span className="muted">
                         {r.expected_low.toFixed(2)} – {r.expected_high.toFixed(2)}

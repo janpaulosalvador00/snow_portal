@@ -3864,3 +3864,54 @@ body.modal-open {
   border-top: 1px solid var(--border);
   background: var(--panel);
 }
+
+/* —— Conexões → Histórico (refresh events) —— */
+.refresh-history-lead {
+  margin: 0 0 0.85rem;
+  font-size: 0.9rem;
+}
+
+.refresh-history-empty p {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.refresh-history-empty strong {
+  color: var(--text);
+}
+
+.refresh-history-pending {
+  margin-top: 0.65rem !important;
+  font-size: 0.85rem;
+}
+
+.refresh-history-table .table-head,
+.refresh-history-table .table-row {
+  grid-template-columns: 1.1fr 1.3fr 1.1fr 1.1fr 0.7fr;
+}
+
+.refresh-history-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .refresh-history-table .table-head {
+    display: none;
+  }
+
+  .refresh-history-table .table-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem 0.75rem;
+  }
+
+  .refresh-history-table .table-row > span:first-child {
+    grid-column: 1 / -1;
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+}

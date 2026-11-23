@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   announceAlertsBadge,
@@ -7,6 +7,10 @@ import {
   type AlertsResponse,
 } from "../api/alerts";
 import { ApiError } from "../api/client";
+import {
+  REFRESH_DUE_WATCHDOG_MS,
+  isRefreshDue,
+} from "../connections/refreshIntervals";
 import { useRefresh } from "../refresh/RefreshContext";
 
 type SeverityFilter = "all" | "alert" | "critical";
@@ -102,7 +106,24 @@ export function AlertsPage() {
     useState<Record<number, CardInterval>>(loadCardIntervals);
   const [lastUpdates, setLastUpdates] = useState<Record<number, string>>({});
   const [headerLastUpdate, setHeaderLastUpdate] = useState<string | null>(null);
+  const headerLastUpdateRef = useRef(headerLastUpdate);
+  const lastUpdatesRef = useRef(lastUpdates);
+  const refreshingAllRef = useRef(false);
+  const refreshingIdsRef = useRef<number[]>([]);
   const { refreshAll, refreshToken, refreshing } = useRefresh();
+
+  useEffect(() => {
+    headerLastUpdateRef.current = headerLastUpdate;
+  }, [headerLastUpdate]);
+  useEffect(() => {
+    lastUpdatesRef.current = lastUpdates;
+  }, [lastUpdates]);
+  useEffect(() => {
+    refreshingAllRef.current = refreshingAll;
+  }, [refreshingAll]);
+  useEffect(() => {
+    refreshingIdsRef.current = refreshingIds;
+  }, [refreshingIds]);
 
   const applyFullResponse = useCallback((response: AlertsResponse) => {
     setData(response);
@@ -186,9 +207,10 @@ export function AlertsPage() {
     [applyFullResponse],
   );
 
+  // Wall-clock due check (same idea as RefreshContext): after sleep/background,
+  // visibility/focus/pageshow + watchdog tick fire immediately when next is past.
   useEffect(() => {
     if (!data?.clients.length) return;
-    const timers: number[] = [];
     const globalSeconds = Number(globalInterval);
     const automaticIds = data.clients
       .filter(
@@ -196,27 +218,52 @@ export function AlertsPage() {
           client.status === "active" && (cardIntervals[client.id] || "global") === "global",
       )
       .map((client) => client.id);
-    if (globalSeconds > 0 && automaticIds.length) {
-      timers.push(
-        window.setInterval(
-          () => void refreshConnections(automaticIds, true),
-          globalSeconds * 1000,
-        ),
-      );
-    }
-    for (const client of data.clients) {
-      if (client.status !== "active") continue;
+    const ownClients = data.clients.filter((client) => {
+      if (client.status !== "active") return false;
       const ownSeconds = Number(cardIntervals[client.id] || "global");
-      if (ownSeconds > 0) {
-        timers.push(
-          window.setInterval(
-            () => void refreshConnections([client.id]),
-            ownSeconds * 1000,
-          ),
-        );
+      return ownSeconds > 0;
+    });
+    const scheduleAnchorMs = Date.now();
+
+    const checkDue = () => {
+      if (document.visibilityState === "hidden") return;
+      const now = Date.now();
+
+      if (
+        globalSeconds > 0 &&
+        automaticIds.length &&
+        !refreshingAllRef.current &&
+        isRefreshDue(headerLastUpdateRef.current, globalSeconds, now, scheduleAnchorMs)
+      ) {
+        void refreshConnections(automaticIds, true);
       }
-    }
-    return () => timers.forEach((timer) => window.clearInterval(timer));
+
+      for (const client of ownClients) {
+        if (refreshingIdsRef.current.includes(client.id)) continue;
+        const ownSeconds = Number(cardIntervals[client.id] || "global");
+        const last = lastUpdatesRef.current[client.id] || null;
+        if (isRefreshDue(last, ownSeconds, now, scheduleAnchorMs)) {
+          void refreshConnections([client.id]);
+        }
+      }
+    };
+
+    const tickId = window.setInterval(checkDue, REFRESH_DUE_WATCHDOG_MS);
+    const onResume = () => {
+      if (document.visibilityState === "hidden") return;
+      checkDue();
+    };
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("focus", onResume);
+    window.addEventListener("pageshow", onResume);
+    onResume();
+
+    return () => {
+      window.clearInterval(tickId);
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("focus", onResume);
+      window.removeEventListener("pageshow", onResume);
+    };
   }, [cardIntervals, data?.clients, globalInterval, refreshConnections]);
 
   /** Card ↻: refresh every dataset of this account; the refreshToken bump re-reads the cards. */

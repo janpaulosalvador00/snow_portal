@@ -54,6 +54,33 @@ export function computeNextRefreshAt(
   return new Date(base + globalSeconds * 1000).toISOString();
 }
 
+/**
+ * Wall-clock due check for auto-refresh.
+ * Prefer `lastIso + interval`; if there is no last yet, use `fallbackAnchorMs`
+ * (typically effect-start / mount) so the first fire still waits one interval.
+ * Survives Mac sleep / background tabs when called from visibility/focus/tick —
+ * bare `setInterval` delays are unreliable after sleep.
+ */
+export function isRefreshDue(
+  lastIso: string | null,
+  intervalSeconds: number,
+  nowMs: number = Date.now(),
+  fallbackAnchorMs?: number,
+): boolean {
+  if (!(intervalSeconds > 0)) return false;
+  if (lastIso) {
+    const base = Date.parse(lastIso);
+    if (!Number.isNaN(base)) return nowMs >= base + intervalSeconds * 1000;
+  }
+  if (fallbackAnchorMs != null) {
+    return nowMs >= fallbackAnchorMs + intervalSeconds * 1000;
+  }
+  return false;
+}
+
+/** Short tick that re-compares `Date.now()` to the due target (not a fire delay). */
+export const REFRESH_DUE_WATCHDOG_MS = 5_000;
+
 export function intervalToSelectValue(minutes: number | null | undefined): ConnIntervalValue {
   if (minutes == null) return "global";
   if (minutes === 0) return "0";

@@ -47,13 +47,15 @@ export function ConnectionsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  const { refreshToken, globalInterval, reloadSchedules } = useRefresh();
+  const { refreshToken, globalInterval, syncSchedules } = useRefresh();
   const globalSeconds = Number(globalInterval);
 
   async function reload() {
     const list = await api<Conn[]>("/api/connections");
     setConnections(list);
-    reloadSchedules?.();
+    // Seed RefreshContext schedules from the same successful fetch (avoids empty-timer stall
+    // when the provider's own fetch was cancelled/failed while Contas salvas still renders).
+    syncSchedules(list);
   }
 
   useEffect(() => {

@@ -132,6 +132,13 @@ def ensure_schema() -> None:
             ADD COLUMN IF NOT EXISTS authenticator_url VARCHAR(500)
             """
         )
+        # Per-connection auto-refresh interval in minutes; NULL = follow Contas salvas global.
+        cur.execute(
+            """
+            ALTER TABLE connections
+            ADD COLUMN IF NOT EXISTS refresh_interval INTEGER
+            """
+        )
         # Allow OAuth/SSO rows without a stored secret
         cur.execute(
             """
@@ -530,7 +537,8 @@ def list_connections_for_user(user: dict) -> list[dict]:
                 """
                 SELECT c.id, c.name, c.account_identifier, c.username,
                        c.auth_method, c.authenticator_url,
-                       c.warehouse, c.role_name, c.team_id, c.created_at,
+                       c.warehouse, c.role_name, c.refresh_interval,
+                       c.team_id, c.created_at,
                        t.name AS team_name
                 FROM connections c
                 LEFT JOIN teams t ON t.id = c.team_id
@@ -542,7 +550,8 @@ def list_connections_for_user(user: dict) -> list[dict]:
                 """
                 SELECT DISTINCT c.id, c.name, c.account_identifier, c.username,
                        c.auth_method, c.authenticator_url,
-                       c.warehouse, c.role_name, c.team_id, c.created_at,
+                       c.warehouse, c.role_name, c.refresh_interval,
+                       c.team_id, c.created_at,
                        t.name AS team_name
                 FROM connections c
                 LEFT JOIN teams t ON t.id = c.team_id
@@ -593,6 +602,18 @@ def get_connection_secret(connection_id: int) -> tuple[dict, str | None]:
     return creds["row"], creds["password"]
 
 
+def _normalize_refresh_interval(value: int | None) -> int | None:
+    """Minutes between auto-refreshes; None/0 = Global. Allowed: 1, 5, 10, 15, 30, 60."""
+    if value is None or value == 0:
+        return None
+    allowed = {1, 5, 10, 15, 30, 60}
+    if value not in allowed:
+        raise ValueError(
+            "refresh_interval inválido. Use null/0 (Global) ou 1, 5, 10, 15, 30, 60 minutos."
+        )
+    return value
+
+
 def create_connection(
     *,
     name: str,
@@ -603,6 +624,7 @@ def create_connection(
     authenticator_url: str | None = None,
     warehouse: str | None = None,
     role_name: str | None = None,
+    refresh_interval: int | None = None,
     created_by: int,
     team_id: int | None,
     acl_team_ids: Iterable[int] | None = None,
@@ -625,15 +647,17 @@ def create_connection(
     if url and auth_method == "sso" and not url.startswith("https://"):
         raise ValueError("URL do IdP SSO deve começar com https://")
 
+    interval = _normalize_refresh_interval(refresh_interval)
+
     with db_cursor(commit=True) as cur:
         cur.execute(
             """
             INSERT INTO connections (
                 name, account_identifier, username, auth_method,
                 authenticator_url, pat_encrypted,
-                warehouse, role_name, created_by, team_id
+                warehouse, role_name, refresh_interval, created_by, team_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -645,6 +669,7 @@ def create_connection(
                 encrypted,
                 warehouse or None,
                 role_name or None,
+                interval,
                 created_by,
                 team_id,
             ),
@@ -681,6 +706,8 @@ def update_connection(
     authenticator_url: str | None = None,
     warehouse: str | None = None,
     role_name: str | None = None,
+    refresh_interval: int | None = None,
+    clear_refresh_interval: bool = False,
     clear_warehouse: bool = False,
     clear_role: bool = False,
     update_secret: bool = False,
@@ -724,6 +751,13 @@ def update_connection(
     else:
         new_role = row.get("role_name")
 
+    if clear_refresh_interval:
+        new_interval = None
+    elif refresh_interval is not None:
+        new_interval = _normalize_refresh_interval(refresh_interval)
+    else:
+        new_interval = row.get("refresh_interval")
+
     encrypted = row.get("pat_encrypted")
     if update_secret:
         if new_method in SECRET_METHODS:
@@ -745,6 +779,7 @@ def update_connection(
                 pat_encrypted = %s,
                 warehouse = %s,
                 role_name = %s,
+                refresh_interval = %s,
                 updated_at = NOW()
             WHERE id = %s
             RETURNING *
@@ -758,6 +793,7 @@ def update_connection(
                 encrypted,
                 new_wh,
                 new_role,
+                new_interval,
                 connection_id,
             ),
         )

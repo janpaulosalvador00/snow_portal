@@ -88,6 +88,8 @@ class ConnectionCreate(SecretInput):
     authenticator_url: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
+    # Minutes; null = follow Contas salvas global interval.
+    refresh_interval: int | None = None
     team_id: int | None = None
     options: dict[str, Any] | None = None
 
@@ -107,6 +109,7 @@ class OAuthStart(BaseModel):
     name: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
+    refresh_interval: int | None = None
     team_id: int | None = None
     connection_id: int | None = None
     return_to: str | None = None
@@ -124,6 +127,8 @@ class ConnectionUpdate(SecretInput):
     authenticator_url: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
+    refresh_interval: int | None = None
+    clear_refresh_interval: bool = False
     clear_warehouse: bool = False
     clear_role: bool = False
     revalidate: bool = True
@@ -188,6 +193,7 @@ def _serialize(row: dict) -> dict:
         "authenticator_url": row.get("authenticator_url"),
         "warehouse": row.get("warehouse"),
         "role_name": row.get("role_name"),
+        "refresh_interval": row.get("refresh_interval"),
         "team_id": row.get("team_id"),
         "team_name": row.get("team_name"),
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
@@ -353,6 +359,7 @@ def create_connection(body: ConnectionCreate, user: dict = Depends(get_current_u
             authenticator_url=body.authenticator_url,
             warehouse=body.warehouse,
             role_name=body.role_name,
+            refresh_interval=body.refresh_interval,
             created_by=user["id"],
             team_id=team_id,
             acl_team_ids=[team_id] if team_id else [],
@@ -441,6 +448,8 @@ def patch_connection(
             authenticator_url=body.authenticator_url,
             warehouse=body.warehouse,
             role_name=body.role_name,
+            refresh_interval=body.refresh_interval,
+            clear_refresh_interval=body.clear_refresh_interval,
             clear_warehouse=body.clear_warehouse,
             clear_role=body.clear_role,
             update_secret=bool(secret) and method in db.SECRET_METHODS,
@@ -503,6 +512,7 @@ def oauth_start(body: OAuthStart, user: dict = Depends(get_current_user)):
             name=body.name,
             warehouse=body.warehouse,
             role_name=body.role_name,
+            refresh_interval=body.refresh_interval,
             team_id=team_id,
             connection_id=body.connection_id,
             return_to=body.return_to if body.return_to in OAUTH_RETURN_PATHS else None,
@@ -604,6 +614,7 @@ def oauth_callback(
 
         team_id = pending.get("team_id")
         existing_id = pending.get("connection_id")
+        pending_interval = pending.get("refresh_interval")
         if existing_id:
             db.update_connection(
                 int(existing_id),
@@ -614,6 +625,8 @@ def oauth_callback(
                 secret=secret,
                 warehouse=pending.get("warehouse"),
                 role_name=pending.get("role_name"),
+                refresh_interval=pending_interval if pending_interval is not None else None,
+                clear_refresh_interval="refresh_interval" in pending and pending_interval is None,
                 clear_warehouse=not pending.get("warehouse"),
                 clear_role=not pending.get("role_name"),
                 update_secret=True,
@@ -629,6 +642,7 @@ def oauth_callback(
                 secret=secret,
                 warehouse=pending.get("warehouse"),
                 role_name=pending.get("role_name"),
+                refresh_interval=pending_interval,
                 created_by=pending["portal_user_id"],
                 team_id=team_id,
                 acl_team_ids=[team_id] if team_id else [],

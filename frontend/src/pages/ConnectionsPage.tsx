@@ -1,12 +1,22 @@
 import { useEffect, useState } from "react";
-import { api, setActiveConnectionId, getActiveConnectionId } from "../api/client";
+import {
+  api,
+  ApiError,
+  setActiveConnectionId,
+  getActiveConnectionId,
+} from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { ConnectionCreateModal } from "../components/ConnectionCreateModal";
 import {
   ConnectionEditModal,
   type Conn,
 } from "../components/ConnectionEditModal";
-import { connIntervalBadge } from "../connections/refreshIntervals";
+import { isConnectionInUse } from "../connections/lifecycle";
+import {
+  connIntervalBadge,
+  connIntervalBadgeClass,
+  connIntervalTitle,
+} from "../connections/refreshIntervals";
 import { GlobalRefreshBar } from "../refresh/GlobalRefreshBar";
 import { useRefresh } from "../refresh/RefreshContext";
 
@@ -26,13 +36,16 @@ export function ConnectionsPage() {
   const { user } = useAuth();
   const [connections, setConnections] = useState<Conn[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [activeId, setActiveId] = useState<number | null>(getActiveConnectionId());
+  const [currentEnvId, setCurrentEnvId] = useState<number | null>(
+    getActiveConnectionId(),
+  );
   const [editingConn, setEditingConn] = useState<Conn | null>(null);
   const [creating, setCreating] = useState(false);
   const [createInitialError, setCreateInitialError] = useState<string | null>(null);
   const [teamId, setTeamId] = useState<number | "">("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const { refreshToken, globalInterval, reloadSchedules } = useRefresh();
   const globalSeconds = Number(globalInterval);
@@ -88,7 +101,7 @@ export function ConnectionsPage() {
       void reload().then(() => {
         if (id) {
           setActiveConnectionId(id);
-          setActiveId(id);
+          setCurrentEnvId(id);
           void api<Conn[]>("/api/connections").then((list) => {
             const target = list.find((c) => c.id === id);
             if (target) setEditingConn(target);
@@ -111,25 +124,58 @@ export function ConnectionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- OAuth return once
   }, []);
 
-  async function activate(id: number) {
-    await api(`/api/connections/${id}/activate`, { method: "POST" });
+  function selectCurrentEnv(id: number) {
     setActiveConnectionId(id);
-    setActiveId(id);
-    setMsg("Conexão ativada.");
+    setCurrentEnvId(id);
+    setMsg("Ambiente atual atualizado. Cost Management e Hub usam esta conta.");
+    setErr(null);
   }
 
-  function inactivate() {
+  function clearCurrentEnv() {
     setActiveConnectionId(null);
-    setActiveId(null);
-    setMsg("Conexão inativada. Cost Management exige uma conta ativa.");
+    setCurrentEnvId(null);
+  }
+
+  async function activateLifecycle(id: number) {
+    setBusyId(id);
+    setErr(null);
+    try {
+      const res = await api<{ message?: string }>(`/api/connections/${id}/activate`, {
+        method: "POST",
+      });
+      setMsg(res.message || "Conexão ativada — voltamos a usá-la no portal.");
+      await reload();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Falha ao ativar a conexão.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function deactivateLifecycle(id: number) {
+    setBusyId(id);
+    setErr(null);
+    try {
+      const res = await api<{ message?: string }>(
+        `/api/connections/${id}/deactivate`,
+        { method: "POST" },
+      );
+      if (currentEnvId === id) clearCurrentEnv();
+      setMsg(
+        res.message ||
+          "Conexão inativada — não usamos mais esta conta (ainda editável).",
+      );
+      await reload();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Falha ao inativar a conexão.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function remove(id: number) {
     await api(`/api/connections/${id}`, { method: "DELETE" });
-    if (activeId === id) {
-      setActiveConnectionId(null);
-      setActiveId(null);
-    }
+    if (currentEnvId === id) clearCurrentEnv();
     if (editingConn?.id === id) setEditingConn(null);
     await reload();
   }
@@ -162,7 +208,11 @@ export function ConnectionsPage() {
   return (
     <div>
       <h1>Conexões Snowflake</h1>
-      <p className="muted">Salve contas de clientes e alterne o ambiente ativo.</p>
+      <p className="muted">
+        Contas salvas: <strong>Ativo</strong> = estamos usando;{" "}
+        <strong>Inativo</strong> = não vamos mais usar. O badge{" "}
+        <em>Ambiente atual</em> indica só a conta selecionada no portal (Hub / Cost).
+      </p>
 
       {err && !editingConn && !creating ? (
         <div className="error-box" role="alert">
@@ -195,21 +245,37 @@ export function ConnectionsPage() {
       ) : (
         <div className="connections-grid">
           {connections.map((c) => {
-            const isActive = activeId === c.id;
+            const lifecycleOn = isConnectionInUse(c);
+            const isCurrentEnv = currentEnvId === c.id;
+            const busy = busyId === c.id;
             return (
-              <article key={c.id} className="row-card connection-card">
+              <article
+                key={c.id}
+                className={`row-card connection-card${lifecycleOn ? "" : " is-inactive"}`}
+              >
                 <div className="card-title-row">
                   <h3>{c.name}</h3>
-                  <span className={isActive ? "badge status-on" : "badge status-off"}>
-                    {isActive ? "ativa" : "inativo"}
-                  </span>
                   <span
-                    className="badge interval"
+                    className={lifecycleOn ? "badge status-on" : "badge status-off"}
                     title={
-                      c.refresh_interval == null
-                        ? "Usa o intervalo Global da lista"
-                        : undefined
+                      lifecycleOn
+                        ? "Em uso / disponível no portal"
+                        : "Arquivada — não vamos mais usar"
                     }
+                  >
+                    {lifecycleOn ? "Ativo" : "Inativo"}
+                  </span>
+                  {isCurrentEnv ? (
+                    <span
+                      className="badge current-env"
+                      title="Conta selecionada para Hub e Cost Management"
+                    >
+                      Ambiente atual
+                    </span>
+                  ) : null}
+                  <span
+                    className={connIntervalBadgeClass(c.refresh_interval)}
+                    title={connIntervalTitle(c.refresh_interval)}
                   >
                     {connIntervalBadge(c.refresh_interval)}
                   </span>
@@ -225,19 +291,37 @@ export function ConnectionsPage() {
                   <button type="button" className="btn" onClick={() => startEdit(c)}>
                     Editar
                   </button>
-                  {isActive ? (
-                    <button type="button" className="btn" onClick={inactivate}>
+                  {lifecycleOn ? (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy}
+                      title="Marca como fora de uso (ainda editável)"
+                      onClick={() => void deactivateLifecycle(c.id)}
+                    >
                       Inativar
                     </button>
                   ) : (
                     <button
                       type="button"
                       className="btn"
-                      onClick={() => void activate(c.id)}
+                      disabled={busy}
+                      title="Volta a marcar como em uso no portal"
+                      onClick={() => void activateLifecycle(c.id)}
                     >
                       Ativar
                     </button>
                   )}
+                  {lifecycleOn && !isCurrentEnv ? (
+                    <button
+                      type="button"
+                      className="btn"
+                      title="Seleciona esta conta para Hub e Cost Management"
+                      onClick={() => selectCurrentEnv(c.id)}
+                    >
+                      Usar
+                    </button>
+                  ) : null}
                   {user?.role === "admin" ? (
                     <button
                       type="button"
@@ -255,8 +339,9 @@ export function ConnectionsPage() {
       )}
       <p className="hint-note">
         <strong>Intervalo por conexão:</strong> badge no card mostra o valor próprio (ex.{" "}
-        <em>15 min</em>) ou <em>Global</em> — neste caso a conexão segue o controle acima. Com
-        Global em <em>Desligada</em>, auto-refresh dessas conexões fica pausado.
+        <em>15 min</em>), <em>Global</em> (segue o controle acima) ou <em>Desligada</em> (sem
+        auto-refresh nesta conexão). Com Global em <em>Desligada</em>, conexões no modo Global
+        também ficam pausadas. Contas <em>Inativas</em> não entram no auto-refresh.
       </p>
 
       {creating ? (
@@ -273,7 +358,7 @@ export function ConnectionsPage() {
           onCreated={(connection, message) => {
             setCreating(false);
             setCreateInitialError(null);
-            setActiveId(connection.id);
+            setCurrentEnvId(connection.id);
             setMsg(message);
             void reload();
           }}

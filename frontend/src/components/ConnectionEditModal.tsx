@@ -27,6 +27,8 @@ export type Conn = {
   warehouse?: string | null;
   role_name?: string | null;
   refresh_interval?: number | null;
+  /** Durable lifecycle: true = in use; false = archived / no longer used. */
+  is_active?: boolean;
   team_id?: number | null;
   team_name?: string | null;
 };

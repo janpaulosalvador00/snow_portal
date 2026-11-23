@@ -175,9 +175,6 @@ export function PerformancePanel({
 
         <div className="perf-card">
           <h4>Diagnóstico por warehouse</h4>
-          <p className="muted perf-card-desc">
-            Regras baseadas em WAREHOUSE_LOAD_HISTORY (docs Snowflake)
-          </p>
           <FetchedAtLabel fetchedAt={data.fetched_at} cached={data.cached} />
           {data.warehouses?.length ? (
             <div

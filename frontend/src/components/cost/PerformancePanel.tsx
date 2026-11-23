@@ -64,7 +64,6 @@ export type PerformanceResp = {
     spill_label: string;
     recommendation: PerformanceRec;
   }[];
-  duration_buckets?: { bucket: string; label: string; query_count: number }[];
 };
 
 const QUERY_LIMIT_OPTIONS = [
@@ -73,13 +72,6 @@ const QUERY_LIMIT_OPTIONS = [
   { value: "50", label: "50" },
   { value: "all", label: "Todos" },
 ] as const;
-
-function badgeClass(level: string): string {
-  if (level === "ok") return "perf-badge ok";
-  if (level === "warn") return "perf-badge warn";
-  if (level === "bad") return "perf-badge bad";
-  return "perf-badge neutral";
-}
 
 const STATUS_LEVEL_LABEL: Record<string, string> = {
   ok: "ok",
@@ -213,23 +205,6 @@ function RecommendationModal({
   );
 }
 
-
-/** Short actionable labels for query hotspot signals. */
-const QUERY_REC_SHORT: Record<string, string> = {
-  remote_spill: "Spill remoto",
-  repeated_heavy: "Muito repetida",
-  long_running: "Tempo alto",
-};
-
-/** Only warn/bad get a badge; neutral/ok/generic → em dash. */
-function querySignal(rec?: PerformanceRec | null): { level: string; text: string } | null {
-  if (!rec) return null;
-  const level = (rec.level || "").toLowerCase();
-  if (level !== "warn" && level !== "bad") return null;
-  const short = QUERY_REC_SHORT[rec.code] || rec.text?.trim();
-  if (!short) return null;
-  return { level, text: short };
-}
 
 function shortHash(key: string, n = 8): string {
   if (!key) return "";
@@ -385,7 +360,7 @@ function compareWarehouses(a: WarehouseRow, b: WarehouseRow, key: WhSortKey, dir
 }
 
 /** "Top queries do período" sortable columns. */
-type QuerySortKey = "tipo" | "query" | "warehouse" | "exec" | "tempo" | "datetime" | "sinal";
+type QuerySortKey = "tipo" | "query" | "warehouse" | "exec" | "tempo" | "datetime";
 
 const QUERY_COLUMNS: { key: QuerySortKey; label: string; numeric?: boolean }[] = [
   { key: "tipo", label: "TIPO" },
@@ -394,12 +369,11 @@ const QUERY_COLUMNS: { key: QuerySortKey; label: string; numeric?: boolean }[] =
   { key: "exec", label: "EXEC.", numeric: true },
   { key: "tempo", label: "TEMPO", numeric: true },
   { key: "datetime", label: "DATA/HORA", numeric: true },
-  { key: "sinal", label: "SINAL" },
 ];
 
-/** EXEC./TEMPO/SINAL default to highest/worst-first (desc); the rest default ascending. */
+/** EXEC./TEMPO default to highest-first (desc); the rest default ascending. */
 function queryDefaultDir(key: QuerySortKey): SortDir {
-  return key === "exec" || key === "tempo" || key === "sinal" ? -1 : 1;
+  return key === "exec" || key === "tempo" ? -1 : 1;
 }
 
 function compareQueries(a: QueryRow, b: QueryRow, key: QuerySortKey, dir: SortDir): number {
@@ -427,8 +401,6 @@ function compareQueries(a: QueryRow, b: QueryRow, key: QuerySortKey, dir: SortDi
       const bv = Number.isFinite(bt) ? bt : 0;
       return mul * (av - bv);
     }
-    case "sinal":
-      return mul * (levelRank(a.recommendation?.level) - levelRank(b.recommendation?.level));
     default:
       return 0;
   }
@@ -721,18 +693,6 @@ export function PerformancePanel({
             </p>
           </div>
           <div className="perf-queries-header-right">
-            {!selectedDay &&
-            data.duration_buckets &&
-            data.duration_buckets.some((b) => b.query_count > 0) ? (
-              <div className="perf-buckets" aria-label="Distribuição por duração">
-                {data.duration_buckets.map((b) => (
-                  <div key={b.bucket} className="perf-bucket">
-                    <span className="muted">{b.label}</span>
-                    <strong>{b.query_count.toLocaleString("pt-BR")}</strong>
-                  </div>
-                ))}
-              </div>
-            ) : null}
             {allQueries.length ? (
               <FilterPill
                 label="Top"
@@ -767,7 +727,6 @@ export function PerformancePanel({
                 })}
               </div>
               {visibleQueries.map((q) => {
-                const signal = querySignal(q.recommendation);
                 const warehouse = q.warehouse_name || "—";
                 const lastExec = formatLastExec(q.last_end_time);
                 const kind = classifyQueryKind(q.query_type, q.query_preview);
@@ -796,15 +755,6 @@ export function PerformancePanel({
                     <span className="perf-num">{q.total_elapsed_label}</span>
                     <span className="perf-num perf-datetime" title={q.last_end_time || undefined}>
                       {lastExec ?? "—"}
-                    </span>
-                    <span className="perf-signal-cell">
-                      {signal ? (
-                        <span className={badgeClass(signal.level)} title={q.recommendation?.text}>
-                          {signal.text}
-                        </span>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
                     </span>
                   </div>
                 );

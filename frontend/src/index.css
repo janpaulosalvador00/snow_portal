@@ -3878,20 +3878,19 @@ body.modal-open {
 
 .perf-queries .table-head,
 .perf-queries .table-row {
-  /* TIPO QUERY WH EXEC TEMPO DATA/HORA SINAL — min widths enable horizontal scroll */
+  /* TIPO QUERY WH EXEC TEMPO DATA/HORA — min widths enable horizontal scroll */
   grid-template-columns:
     minmax(5.25rem, 0.55fr)
     minmax(12rem, 2.2fr)
     minmax(6rem, 0.95fr)
     minmax(3.25rem, 0.45fr)
     minmax(3.5rem, 0.55fr)
-    minmax(7.5rem, 0.75fr)
-    minmax(4.5rem, 0.85fr);
+    minmax(7.5rem, 0.75fr);
   gap: 0.65rem;
   padding: 0.55rem 0.85rem;
   align-items: center;
   min-height: var(--perf-query-row-h, 3.6rem);
-  min-width: 48rem;
+  min-width: 42rem;
 }
 
 .perf-kind-cell {
@@ -3994,46 +3993,6 @@ body.modal-open {
   color: var(--muted);
 }
 
-.perf-signal-cell {
-  min-width: 0;
-}
-
-.perf-badge {
-  display: inline-block;
-  max-width: 100%;
-  padding: 0.12rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  border: 1px solid var(--border);
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: middle;
-}
-
-.perf-badge.ok {
-  color: #3dd68c;
-  border-color: #2a5a40;
-  background: #122018;
-}
-
-.perf-badge.warn {
-  color: #f5a524;
-  border-color: #5a4520;
-  background: #221a10;
-}
-
-.perf-badge.bad {
-  color: #f07178;
-  border-color: #5a3038;
-  background: #201216;
-}
-
-.perf-badge.neutral {
-  color: var(--muted);
-}
-
 .perf-queries-header {
   display: flex;
   align-items: flex-start;
@@ -4066,44 +4025,10 @@ body.modal-open {
   flex: 0 0 auto;
 }
 
-.perf-buckets {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 0.35rem;
-  margin: 0;
-}
-
-.perf-bucket {
-  background: #12151a;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 0.2rem 0.45rem;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
-  line-height: 1.15;
-}
-
-.perf-bucket .muted {
-  font-size: 0.68rem;
-  white-space: nowrap;
-}
-
-.perf-bucket strong {
-  font-size: 0.82rem;
-  font-variant-numeric: tabular-nums;
-}
-
 @media (max-width: 720px) {
   .perf-queries-header-right {
     width: 100%;
     justify-content: flex-start;
-  }
-
-  .perf-buckets {
-    flex-wrap: wrap;
   }
 }
 

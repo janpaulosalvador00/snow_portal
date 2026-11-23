@@ -11,8 +11,13 @@ import {
   YAxis,
 } from "recharts";
 import { FilterPill } from "./FilterPill";
-import { QueryKindBadge } from "./QueryKindBadge";
-import { classifyQueryKind, effectiveQueryKind } from "./queryKind";
+import { QueryKindBadge, type QueryKindBadgeChange } from "./QueryKindBadge";
+import {
+  classifyQueryKind,
+  defaultColorForQueryKind,
+  effectiveQueryKind,
+  normalizeQueryKindColor,
+} from "./queryKind";
 import {
   loadQueryKindOverrides,
   saveQueryKindOverride,
@@ -449,17 +454,37 @@ export function PerformancePanel({
 
   function resolveKind(q: QueryRow): string {
     const key = q.pattern_key || q.sample_query_id;
-    return effectiveQueryKind(q.query_type, q.query_preview, key ? kindOverrides[key] : null);
+    const entry = key ? kindOverrides[key] : undefined;
+    return effectiveQueryKind(q.query_type, q.query_preview, entry?.kind);
   }
 
-  function setKindOverride(q: QueryRow, next: string | null) {
+  function setKindOverride(q: QueryRow, next: QueryKindBadgeChange) {
     const key = q.pattern_key || q.sample_query_id;
     if (!key) return;
+    if (!next) {
+      setKindOverrides(saveQueryKindOverride(connectionId, key, null));
+      return;
+    }
     const auto = classifyQueryKind(q.query_type, q.query_preview);
-    const trimmed = (next || "").trim();
-    // Selecting the automatic kind clears the override (no stale "edited" mark).
-    const toSave = !trimmed || trimmed === auto ? null : trimmed;
-    setKindOverrides(saveQueryKindOverride(connectionId, key, toSave));
+    const trimmed = (next.kind || "").trim();
+    if (!trimmed) {
+      setKindOverrides(saveQueryKindOverride(connectionId, key, null));
+      return;
+    }
+    const color = normalizeQueryKindColor(next.color);
+    const defaultColor = defaultColorForQueryKind(trimmed);
+    const colorIsDefault = !color || color === normalizeQueryKindColor(defaultColor);
+    // Auto kind + default color → clear override (no stale "edited" mark).
+    if (trimmed === auto && colorIsDefault) {
+      setKindOverrides(saveQueryKindOverride(connectionId, key, null));
+      return;
+    }
+    setKindOverrides(
+      saveQueryKindOverride(connectionId, key, {
+        kind: trimmed,
+        color: color || defaultColor,
+      }),
+    );
   }
 
   // Drop day filter only when it falls outside the loaded window / series.
@@ -776,6 +801,7 @@ export function PerformancePanel({
                     <span className="perf-kind-cell">
                       <QueryKindBadge
                         kind={kind}
+                        color={override?.color}
                         overridden={Boolean(override)}
                         queryType={q.query_type}
                         disabled={loading}

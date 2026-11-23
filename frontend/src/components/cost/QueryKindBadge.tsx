@@ -1,181 +1,134 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import {
+  QUERY_KIND_COLOR_SWATCHES,
   QUERY_KIND_CUSTOM_MAX,
   QUERY_KIND_OPTIONS,
+  defaultColorForQueryKind,
   normalizeCustomQueryKind,
+  normalizeQueryKindColor,
   queryKindCssClass,
+  resolveQueryKindColor,
   type QueryKind,
 } from "./queryKind";
 
+export type QueryKindBadgeChange = {
+  kind: string;
+  color: string;
+} | null;
+
 type Props = {
   kind: string;
+  /** Saved accent override; null/undefined → kind default. */
+  color?: string | null;
   overridden: boolean;
   queryType?: string | null;
   disabled?: boolean;
-  onChange: (next: string | null) => void;
+  onChange: (next: QueryKindBadgeChange) => void;
 };
 
-type MenuPos = {
-  left: number;
-  minWidth: number;
-  maxHeight: number;
-  top?: number;
-  bottom?: number;
-};
-
-const MENU_MAX_HEIGHT = 320;
-const MENU_GAP = 4;
-const VIEWPORT_MARGIN = 8;
 const OTHER_VALUE = "__other__";
-const RESET_VALUE = "__reset__";
 
-export function QueryKindBadge({ kind, overridden, queryType, disabled, onChange }: Props) {
+function badgeAccentStyle(accent: string): CSSProperties {
+  return { ["--kind-accent" as string]: accent };
+}
+
+export function QueryKindBadge({ kind, color, overridden, queryType, disabled, onChange }: Props) {
   const [open, setOpen] = useState(false);
-  const [customMode, setCustomMode] = useState(false);
-  const [customText, setCustomText] = useState("");
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const [menuPos, setMenuPos] = useState<MenuPos | null>(null);
+  const [draftKind, setDraftKind] = useState(kind);
+  const [draftCustom, setDraftCustom] = useState("");
+  const [useCustom, setUseCustom] = useState(false);
+  const [draftColor, setDraftColor] = useState(resolveQueryKindColor(kind, color));
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const customInputRef = useRef<HTMLInputElement>(null);
   const baseId = useId();
-  const listId = `${baseId}-list`;
+  const titleId = `${baseId}-title`;
 
-  const options: { value: string; label: string }[] = [
-    ...QUERY_KIND_OPTIONS.map((k: QueryKind) => ({ value: k, label: k })),
-    { value: OTHER_VALUE, label: "Outro…" },
-  ];
-  if (overridden) {
-    options.push({ value: RESET_VALUE, label: "Restaurar automático" });
-  }
+  const accent = resolveQueryKindColor(kind, color);
+  const knownSelected = (QUERY_KIND_OPTIONS as readonly string[]).includes(kind);
 
-  const selectedIndex = options.findIndex((o) => o.value === kind);
-
-  function openMenu() {
+  function openModal() {
     if (disabled) return;
-    setCustomMode(false);
-    setCustomText("");
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    const isCustom = overridden && !knownSelected;
+    setDraftKind(kind);
+    setUseCustom(isCustom);
+    setDraftCustom(isCustom ? kind : "");
+    setDraftColor(resolveQueryKindColor(kind, color));
     setOpen(true);
   }
 
-  function closeMenu(returnFocus: boolean) {
+  function closeModal(returnFocus: boolean) {
     setOpen(false);
-    setCustomMode(false);
     if (returnFocus) triggerRef.current?.focus();
   }
 
-  function applyKind(value: string | null) {
-    onChange(value);
-    closeMenu(true);
+  function resolvedDraftKind(): string | null {
+    if (useCustom) return normalizeCustomQueryKind(draftCustom);
+    return draftKind.trim() || null;
   }
 
-  function choose(index: number) {
-    const opt = options[index];
-    if (!opt) return;
-    if (opt.value === RESET_VALUE) {
-      applyKind(null);
-      return;
-    }
-    if (opt.value === OTHER_VALUE) {
-      setCustomMode(true);
-      setCustomText(overridden && !QUERY_KIND_OPTIONS.includes(kind as QueryKind) ? kind : "");
-      return;
-    }
-    applyKind(opt.value);
+  function applySave() {
+    const nextKind = resolvedDraftKind();
+    if (!nextKind) return;
+    const nextColor = normalizeQueryKindColor(draftColor) || defaultColorForQueryKind(nextKind);
+    onChange({ kind: nextKind, color: nextColor });
+    closeModal(true);
   }
 
-  function submitCustom() {
-    const normalized = normalizeCustomQueryKind(customText);
-    if (!normalized) return;
-    applyKind(normalized);
+  function applyReset() {
+    onChange(null);
+    closeModal(true);
   }
 
-  useLayoutEffect(() => {
-    if (!open) {
-      setMenuPos(null);
+  function selectKind(value: string) {
+    if (value === OTHER_VALUE) {
+      setUseCustom(true);
+      setDraftCustom(overridden && !knownSelected ? kind : "");
       return;
     }
-    function place() {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const vh = window.innerHeight;
-      const vw = window.innerWidth;
-      const desired = Math.min(MENU_MAX_HEIGHT, vh * 0.45);
-      const natural = menuRef.current?.scrollHeight ?? options.length * 32 + 12;
-      const needed = Math.min(desired, natural);
-      const below = vh - rect.bottom - MENU_GAP - VIEWPORT_MARGIN;
-      const above = rect.top - MENU_GAP - VIEWPORT_MARGIN;
-      const minWidth = Math.max(rect.width, 160);
-      const width = Math.max(menuRef.current?.offsetWidth ?? minWidth, minWidth);
-      const left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, vw - width - VIEWPORT_MARGIN));
-      if (below >= needed || below >= above) {
-        setMenuPos({ left, minWidth, top: rect.bottom + MENU_GAP, maxHeight: Math.min(desired, below) });
-      } else {
-        setMenuPos({ left, minWidth, bottom: vh - rect.top + MENU_GAP, maxHeight: Math.min(desired, above) });
-      }
+    setUseCustom(false);
+    setDraftKind(value);
+    // When switching kind, snap color to that kind's default unless user already
+    // picked a non-default swatch for the previous draft (keep their pick).
+    const prevDefault = defaultColorForQueryKind(useCustom ? draftCustom || kind : draftKind);
+    if (normalizeQueryKindColor(draftColor) === normalizeQueryKindColor(prevDefault)) {
+      setDraftColor(defaultColorForQueryKind(value));
     }
-    place();
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
-    return () => {
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
-    };
-  }, [open, options.length, customMode]);
-
-  useLayoutEffect(() => {
-    if (!open || !customMode) return;
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, [open, customMode]);
+  }
 
   useEffect(() => {
     if (!open) return;
-    function onDoc(e: MouseEvent) {
-      const t = e.target as Node;
-      if (triggerRef.current?.contains(t) || menuRef.current?.contains(t)) return;
-      setOpen(false);
-      setCustomMode(false);
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeModal(true);
+      }
     }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKeyDown);
+    document.body.classList.add("modal-open");
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.classList.remove("modal-open");
+    };
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (useCustom) {
+      customInputRef.current?.focus();
+      customInputRef.current?.select();
+      return;
+    }
+    dialogRef.current?.querySelector<HTMLElement>("button.perf-kind-type-option.selected")?.focus();
+  }, [open, useCustom]);
 
   function onTriggerKeyDown(e: ReactKeyboardEvent<HTMLButtonElement>) {
     if (open) return;
     if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
       e.preventDefault();
-      openMenu();
-    }
-  }
-
-  function onListKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
-    if (customMode) return;
-    const last = options.length - 1;
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        setActiveIndex((i) => Math.min(last, i + 1));
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setActiveIndex((i) => Math.max(0, i - 1));
-        break;
-      case "Enter":
-      case " ":
-        e.preventDefault();
-        choose(activeIndex);
-        break;
-      case "Escape":
-        e.preventDefault();
-        closeMenu(true);
-        break;
-      case "Tab":
-        closeMenu(false);
-        break;
+      openModal();
     }
   }
 
@@ -184,107 +137,181 @@ export function QueryKindBadge({ kind, overridden, queryType, disabled, onChange
     overridden ? "Editado manualmente — clique para alterar" : "Clique para classificar",
   ].filter(Boolean);
 
-  const menu =
-    open && menuPos
-      ? createPortal(
+  const canSave = Boolean(resolvedDraftKind());
+  const colorNormalized = normalizeQueryKindColor(draftColor) || draftColor;
+
+  const modal = open
+    ? createPortal(
+        <div
+          className="admin-modal-backdrop perf-kind-modal-backdrop"
+          role="presentation"
+          onClick={() => closeModal(false)}
+        >
           <div
-            ref={menuRef}
-            id={listId}
-            className="perf-kind-menu"
-            role="listbox"
-            tabIndex={-1}
-            aria-label="Tipo da query"
-            onKeyDown={onListKeyDown}
-            style={{
-              top: menuPos.top,
-              bottom: menuPos.bottom,
-              left: menuPos.left,
-              minWidth: menuPos.minWidth,
-              maxHeight: menuPos.maxHeight,
-            }}
+            ref={dialogRef}
+            className="admin-modal perf-kind-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            onClick={(e) => e.stopPropagation()}
           >
-            {customMode ? (
-              <form
-                className="perf-kind-custom"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  submitCustom();
-                }}
+            <div className="admin-modal-head">
+              <div>
+                <h2 id={titleId}>Tipo da query</h2>
+                <p className="admin-modal-lead">Escolha o tipo e a cor do badge</p>
+              </div>
+              <button
+                type="button"
+                className="btn admin-modal-close"
+                onClick={() => closeModal(true)}
+                aria-label="Fechar"
               >
-                <label className="perf-kind-custom-label" htmlFor={`${baseId}-custom`}>
-                  Outro tipo
-                </label>
-                <input
-                  ref={inputRef}
-                  id={`${baseId}-custom`}
-                  className="perf-kind-custom-input"
-                  value={customText}
-                  maxLength={QUERY_KIND_CUSTOM_MAX}
-                  placeholder="ex. TASK"
-                  onChange={(e) => setCustomText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      setCustomMode(false);
-                    }
-                  }}
-                />
-                <div className="perf-kind-custom-actions">
-                  <button type="button" className="perf-kind-custom-btn" onClick={() => setCustomMode(false)}>
-                    Voltar
-                  </button>
-                  <button type="submit" className="perf-kind-custom-btn is-primary" disabled={!customText.trim()}>
-                    Salvar
-                  </button>
-                </div>
-              </form>
-            ) : (
-              options.map((o, i) => {
-                const isSelected =
-                  o.value === kind || (o.value === OTHER_VALUE && overridden && !QUERY_KIND_OPTIONS.includes(kind as QueryKind));
-                return (
+                ×
+              </button>
+            </div>
+
+            <div className="perf-kind-modal-body">
+              <div className="perf-kind-modal-preview" aria-hidden>
+                <span
+                  className={`perf-kind-badge has-accent ${queryKindCssClass(resolvedDraftKind() || kind)}`}
+                  style={badgeAccentStyle(colorNormalized)}
+                >
+                  <span className="perf-kind-label">{resolvedDraftKind() || kind}</span>
+                </span>
+              </div>
+
+              <fieldset className="perf-kind-modal-fieldset">
+                <legend>Tipo</legend>
+                <div className="perf-kind-type-list" role="listbox" aria-label="Tipo">
+                  {QUERY_KIND_OPTIONS.map((opt: QueryKind) => {
+                    const selected = !useCustom && draftKind === opt;
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        className={`perf-kind-type-option${selected ? " selected" : ""}`}
+                        onClick={() => selectKind(opt)}
+                      >
+                        <span
+                          className="perf-kind-type-swatch"
+                          style={{ background: defaultColorForQueryKind(opt) }}
+                          aria-hidden
+                        />
+                        <span>{opt}</span>
+                        {selected ? <span aria-hidden>✓</span> : null}
+                      </button>
+                    );
+                  })}
                   <button
-                    key={o.value}
                     type="button"
                     role="option"
-                    aria-selected={isSelected}
-                    className={`perf-kind-option${isSelected ? " selected" : ""}${
-                      i === activeIndex ? " active" : ""
-                    }${o.value === RESET_VALUE ? " is-reset" : ""}`}
-                    onMouseEnter={() => setActiveIndex(i)}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => choose(i)}
+                    aria-selected={useCustom}
+                    className={`perf-kind-type-option${useCustom ? " selected" : ""}`}
+                    onClick={() => selectKind(OTHER_VALUE)}
                   >
-                    <span>{o.label}</span>
-                    {isSelected && o.value !== OTHER_VALUE && o.value !== RESET_VALUE ? (
-                      <span aria-hidden>✓</span>
-                    ) : null}
+                    <span
+                      className="perf-kind-type-swatch"
+                      style={{ background: defaultColorForQueryKind("CUSTOM") }}
+                      aria-hidden
+                    />
+                    <span>Outro…</span>
+                    {useCustom ? <span aria-hidden>✓</span> : null}
                   </button>
-                );
-              })
-            )}
-          </div>,
-          document.body,
-        )
-      : null;
+                </div>
+                {useCustom ? (
+                  <label className="perf-kind-custom-field" htmlFor={`${baseId}-custom`}>
+                    Nome personalizado
+                    <input
+                      ref={customInputRef}
+                      id={`${baseId}-custom`}
+                      className="perf-kind-custom-input"
+                      value={draftCustom}
+                      maxLength={QUERY_KIND_CUSTOM_MAX}
+                      placeholder="ex. TASK"
+                      onChange={(e) => setDraftCustom(e.target.value)}
+                    />
+                  </label>
+                ) : null}
+              </fieldset>
+
+              <fieldset className="perf-kind-modal-fieldset">
+                <legend>Cor</legend>
+                <div className="perf-kind-color-row">
+                  <div className="perf-kind-swatches" role="list" aria-label="Cores sugeridas">
+                    {QUERY_KIND_COLOR_SWATCHES.map((swatch) => {
+                      const active =
+                        normalizeQueryKindColor(draftColor) === normalizeQueryKindColor(swatch);
+                      return (
+                        <button
+                          key={swatch}
+                          type="button"
+                          role="listitem"
+                          className={`perf-kind-swatch${active ? " selected" : ""}`}
+                          style={{ background: swatch }}
+                          title={swatch}
+                          aria-label={`Cor ${swatch}`}
+                          aria-pressed={active}
+                          onClick={() => setDraftColor(swatch)}
+                        />
+                      );
+                    })}
+                  </div>
+                  <label className="perf-kind-color-picker-label" htmlFor={`${baseId}-color`}>
+                    <span>Personalizar</span>
+                    <input
+                      id={`${baseId}-color`}
+                      type="color"
+                      className="perf-kind-color-picker"
+                      value={colorNormalized.startsWith("#") && colorNormalized.length === 7 ? colorNormalized : "#29b5e8"}
+                      onChange={(e) => setDraftColor(e.target.value)}
+                    />
+                  </label>
+                </div>
+              </fieldset>
+            </div>
+
+            <div className="admin-modal-actions perf-kind-modal-actions">
+              {overridden ? (
+                <button type="button" className="btn perf-kind-reset-btn" onClick={applyReset}>
+                  Restaurar automático
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="perf-kind-modal-actions-end">
+                <button type="button" className="btn" onClick={() => closeModal(true)}>
+                  Cancelar
+                </button>
+                <button type="button" className="btn primary" disabled={!canSave} onClick={applySave}>
+                  Salvar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )
+    : null;
 
   return (
     <>
       <button
         type="button"
         ref={triggerRef}
-        className={`perf-kind-badge ${queryKindCssClass(kind)}${overridden ? " is-overridden" : ""}${
+        className={`perf-kind-badge has-accent ${queryKindCssClass(kind)}${overridden ? " is-overridden" : ""}${
           open ? " is-open" : ""
         }`}
+        style={badgeAccentStyle(accent)}
         disabled={disabled}
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-expanded={open}
-        aria-controls={open ? listId : undefined}
         title={titleParts.join(" · ")}
         onClick={(e) => {
           e.stopPropagation();
-          if (open) closeMenu(false);
-          else openMenu();
+          if (open) closeModal(false);
+          else openModal();
         }}
         onKeyDown={onTriggerKeyDown}
       >
@@ -304,7 +331,7 @@ export function QueryKindBadge({ kind, overridden, queryType, disabled, onChange
           </svg>
         ) : null}
       </button>
-      {menu}
+      {modal}
     </>
   );
 }

@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS connections (
     pat_encrypted       TEXT,
     warehouse           VARCHAR(200),
     role_name           VARCHAR(200),
-    -- Minutes between auto-refreshes; NULL = follow Contas salvas global interval.
+    -- Auto-refresh minutes: NULL=Global, 0=Desligada, 1..60=fixed.
     refresh_interval    INTEGER,
     created_by          INT REFERENCES users(id) ON DELETE SET NULL,
     team_id             INT REFERENCES teams(id) ON DELETE SET NULL,

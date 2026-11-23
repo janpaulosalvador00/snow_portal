@@ -124,7 +124,10 @@ def create_oauth_pending(
     team_id: int | None,
     connection_id: int | None = None,
     return_to: str | None = None,
+    # Auto-refresh minutes: null=Global, 0=Desligada, 1..60=fixed.
     refresh_interval: int | None = None,
+    # When True (create, or reconnect with team_id in body), persist team ACL on callback.
+    update_team: bool = True,
 ) -> dict[str, str]:
     redirect_uri = oauth_redirect_uri()
     client_id = active_client_id()
@@ -161,6 +164,7 @@ def create_oauth_pending(
         "role_name": role_name or None,
         "refresh_interval": refresh_interval,
         "team_id": team_id,
+        "update_team": update_team,
         "connection_id": connection_id,
         "return_to": return_to,
         "code_verifier": verifier,

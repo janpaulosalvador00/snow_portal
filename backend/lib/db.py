@@ -132,11 +132,29 @@ def ensure_schema() -> None:
             ADD COLUMN IF NOT EXISTS authenticator_url VARCHAR(500)
             """
         )
-        # Per-connection auto-refresh interval in minutes; NULL = follow Contas salvas global.
+        # Per-connection auto-refresh (minutes):
+        #   NULL = Global (follow Contas salvas bar)
+        #   0    = Desligada (no auto-refresh for this connection)
+        #   1..60 = fixed minutes
         cur.execute(
             """
             ALTER TABLE connections
             ADD COLUMN IF NOT EXISTS refresh_interval INTEGER
+            """
+        )
+        # Durable in-use flag (NOT "currently selected environment"):
+        #   TRUE  = available / we use this connection
+        #   FALSE = archived / we no longer use it (still editable / reactivatable)
+        cur.execute(
+            """
+            ALTER TABLE connections
+            ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_connections_is_active
+            ON connections(is_active)
             """
         )
         # Allow OAuth/SSO rows without a stored secret
@@ -531,6 +549,13 @@ def update_team(team_id: int, name: str) -> bool:
 
 
 def list_connections_for_user(user: dict) -> list[dict]:
+    """Connections visible to ``user``.
+
+    ACL contract for ``connections.team_id``:
+      - NULL  → Todos (no team restriction; visible to any authenticated user)
+      - int   → primary team; also visible via ``connection_acl`` or ``created_by``
+    Admins see every connection.
+    """
     with db_cursor() as cur:
         if user["role"] == "admin":
             cur.execute(
@@ -556,7 +581,10 @@ def list_connections_for_user(user: dict) -> list[dict]:
                 FROM connections c
                 LEFT JOIN teams t ON t.id = c.team_id
                 LEFT JOIN connection_acl a ON a.connection_id = c.id
-                WHERE c.team_id = %s OR a.team_id = %s OR c.created_by = %s
+                WHERE c.team_id IS NULL
+                   OR c.team_id = %s
+                   OR a.team_id = %s
+                   OR c.created_by = %s
                 ORDER BY c.name
                 """,
                 (user.get("team_id"), user.get("team_id"), user["id"]),
@@ -603,15 +631,26 @@ def get_connection_secret(connection_id: int) -> tuple[dict, str | None]:
 
 
 def _normalize_refresh_interval(value: int | None) -> int | None:
-    """Minutes between auto-refreshes; None/0 = Global. Allowed: 1, 5, 10, 15, 30, 60."""
-    if value is None or value == 0:
+    """Normalize per-connection auto-refresh interval (minutes).
+
+    Contract:
+      - None  → Global (follow Contas salvas bar)
+      - 0     → Desligada (this connection does NOT schedule auto-refresh)
+      - 1..60 → fixed minutes
+    """
+    if value is None:
         return None
-    allowed = {1, 5, 10, 15, 30, 60}
-    if value not in allowed:
+    if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(
-            "refresh_interval inválido. Use null/0 (Global) ou 1, 5, 10, 15, 30, 60 minutos."
+            "refresh_interval inválido. Use null (Global), 0 (Desligada) ou 1..60 minutos."
         )
-    return value
+    if value == 0:
+        return 0
+    if 1 <= value <= 60:
+        return value
+    raise ValueError(
+        "refresh_interval inválido. Use null (Global), 0 (Desligada) ou 1..60 minutos."
+    )
 
 
 def create_connection(
@@ -675,7 +714,11 @@ def create_connection(
             ),
         )
         conn_id = cur.fetchone()["id"]
-        for tid in acl_team_ids or []:
+        # Prefer explicit acl_team_ids; otherwise mirror primary team_id (empty = Todos).
+        ids = list(acl_team_ids) if acl_team_ids is not None else ([team_id] if team_id else [])
+        for tid in ids:
+            if tid is None:
+                continue
             cur.execute(
                 """
                 INSERT INTO connection_acl (connection_id, team_id)
@@ -695,6 +738,20 @@ def delete_connection(connection_id: int) -> None:
     token_export.remove_token_files(connection_id)
 
 
+def _replace_connection_acl(cur, connection_id: int, team_id: int | None) -> None:
+    """Keep ``connection_acl`` aligned with primary ``team_id`` (empty when Todos)."""
+    cur.execute("DELETE FROM connection_acl WHERE connection_id = %s", (connection_id,))
+    if team_id is not None:
+        cur.execute(
+            """
+            INSERT INTO connection_acl (connection_id, team_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (connection_id, team_id),
+        )
+
+
 def update_connection(
     connection_id: int,
     *,
@@ -710,10 +767,18 @@ def update_connection(
     clear_refresh_interval: bool = False,
     clear_warehouse: bool = False,
     clear_role: bool = False,
+    team_id: int | None = None,
+    clear_team: bool = False,
+    update_team: bool = False,
     update_secret: bool = False,
     secret_source: dict | None = None,
 ) -> dict:
-    """Update connection fields; optionally replace credentials (re-auth)."""
+    """Update connection fields; optionally replace credentials (re-auth).
+
+    Team ACL (only when ``update_team`` or ``clear_team``):
+      - ``clear_team=True`` → ``team_id`` NULL (Todos) and empty ACL
+      - else ``team_id`` int/None written as-is; ACL mirrors primary team
+    """
     row = get_connection_by_id(connection_id)
     if not row:
         raise ValueError("Conexão não encontrada.")
@@ -758,6 +823,14 @@ def update_connection(
     else:
         new_interval = row.get("refresh_interval")
 
+    apply_team = clear_team or update_team
+    if clear_team:
+        new_team_id = None
+    elif update_team:
+        new_team_id = team_id
+    else:
+        new_team_id = row.get("team_id")
+
     encrypted = row.get("pat_encrypted")
     if update_secret:
         if new_method in SECRET_METHODS:
@@ -780,6 +853,7 @@ def update_connection(
                 warehouse = %s,
                 role_name = %s,
                 refresh_interval = %s,
+                team_id = %s,
                 updated_at = NOW()
             WHERE id = %s
             RETURNING *
@@ -794,10 +868,13 @@ def update_connection(
                 new_wh,
                 new_role,
                 new_interval,
+                new_team_id,
                 connection_id,
             ),
         )
         updated = cur.fetchone()
+        if apply_team:
+            _replace_connection_acl(cur, connection_id, new_team_id)
     _sync_tokens_safely(connection_id, source=secret_source if update_secret else None)
     return updated
 

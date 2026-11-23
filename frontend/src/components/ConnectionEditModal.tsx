@@ -27,8 +27,11 @@ export type Conn = {
   warehouse?: string | null;
   role_name?: string | null;
   refresh_interval?: number | null;
-  team_name?: string;
+  team_id?: number | null;
+  team_name?: string | null;
 };
+
+type Team = { id: number; name: string };
 
 type WarehouseOption = {
   name: string;
@@ -135,7 +138,9 @@ function warehouseHeaderLabel(
 
 type Props = {
   connection: Conn;
+  teams: Team[];
   teamId: number | "";
+  onTeamIdChange: (id: number | "") => void;
   globalIntervalSeconds: number;
   onClose: () => void;
   onSaved: (message: string) => void;
@@ -145,7 +150,9 @@ type Props = {
 
 export function ConnectionEditModal({
   connection,
+  teams,
   teamId,
+  onTeamIdChange,
   globalIntervalSeconds,
   onClose,
   onSaved,
@@ -344,6 +351,8 @@ export function ConnectionEditModal({
           role_name: editRole,
           clear_warehouse: !editWarehouse.trim(),
           clear_role: !editRole.trim(),
+          team_id: teamId === "" ? null : Number(teamId),
+          clear_team: teamId === "",
           ...intervalPayload(),
           revalidate: false,
         }),
@@ -418,6 +427,8 @@ export function ConnectionEditModal({
       role_name: editRole,
       clear_warehouse: !editWarehouse.trim(),
       clear_role: !editRole.trim(),
+      team_id: teamId === "" ? null : Number(teamId),
+      clear_team: teamId === "",
       ...intervalPayload(),
       revalidate: true,
     };
@@ -456,6 +467,10 @@ export function ConnectionEditModal({
         <em>Global</em> segue o intervalo da barra em Contas salvas (
         {globalIntervalHelp(globalIntervalSeconds)}). Se a Global estiver Desligada, esta conexão
         não atualiza automaticamente.
+      </>
+    ) : String(editInterval) === "0" ? (
+      <>
+        <em>Desligada</em>: esta conexão não atualiza automaticamente, independente da barra Global.
       </>
     ) : (
       <>
@@ -671,6 +686,25 @@ export function ConnectionEditModal({
                 ))}
               </select>
               <span className="field-help">{intervalHelp}</span>
+            </label>
+            <label>
+              Time
+              <select
+                value={teamId === "" ? "" : String(teamId)}
+                onChange={(e) =>
+                  onTeamIdChange(e.target.value ? Number(e.target.value) : "")
+                }
+              >
+                <option value="">Todos</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <span className="field-help">
+                Todos = qualquer time pode acessar esta conexão (team_id null).
+              </span>
             </label>
             <div className="row-actions" style={{ marginTop: "-0.25rem" }}>
               <button

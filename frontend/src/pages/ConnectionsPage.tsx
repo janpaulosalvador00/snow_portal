@@ -52,10 +52,7 @@ export function ConnectionsPage() {
   useEffect(() => {
     void reload().catch(() => setConnections([]));
     void api<Team[]>("/api/teams")
-      .then((t) => {
-        setTeams(t);
-        if (t.length) setTeamId(t[0].id);
-      })
+      .then((t) => setTeams(t))
       .catch(() => setTeams([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once
   }, []);
@@ -140,6 +137,7 @@ export function ConnectionsPage() {
   function openCreate() {
     setCreateInitialError(null);
     setEditingConn(null);
+    setTeamId(""); // Todos
     setCreating(true);
     setErr(null);
   }
@@ -147,8 +145,13 @@ export function ConnectionsPage() {
   function startEdit(c: Conn) {
     setCreating(false);
     setEditingConn(c);
+    setTeamId(c.team_id ?? "");
     setErr(null);
     setMsg(null);
+  }
+
+  function teamLabel(c: Conn): string {
+    return c.team_id == null ? "Todos" : c.team_name?.trim() || "—";
   }
 
   const editingLive =
@@ -216,7 +219,7 @@ export function ConnectionsPage() {
                   {METHOD_LABELS[c.auth_method] || c.auth_method}
                   <br />
                   WH: {c.warehouse?.trim() || "(padrão da sessão / vazio)"} ·{" "}
-                  {c.role_name?.trim() || "(padrão)"}
+                  {c.role_name?.trim() || "(padrão)"} · Time: {teamLabel(c)}
                 </p>
                 <div className="row-actions">
                   <button type="button" className="btn" onClick={() => startEdit(c)}>
@@ -282,7 +285,9 @@ export function ConnectionsPage() {
         <ConnectionEditModal
           key={editingLive.id}
           connection={editingLive}
+          teams={teams}
           teamId={teamId}
+          onTeamIdChange={setTeamId}
           globalIntervalSeconds={globalSeconds}
           onClose={() => setEditingConn(null)}
           onSaved={(message) => {

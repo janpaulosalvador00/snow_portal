@@ -14,13 +14,14 @@ Mockup aprovado: `docs/mockups/conexoes-intervalo-atualizacao.html`
 - [x] Deep-link `?edit=` e OAuth callback reabrem modal
 - [x] Deploy + verificação no browser
 
-## Comportamento
+## Comportamento / contrato `refresh_interval`
 
-| Origem | Timer |
-|--------|--------|
-| `refresh_interval` = N minutos | POST `/api/connections/{id}/refresh` a cada N min |
-| `refresh_interval` = NULL (Global) | Segue intervalo Global da lista; se Desligada → sem auto |
-| Botão ↻ manual | Continua refresh de TODAS as conexões |
+| Valor | Significado | Timer |
+|--------|-------------|--------|
+| `NULL` | Global | Segue intervalo Global da barra Contas salvas; se Global=Desligada → sem auto |
+| `0` | Desligada | Esta conexão NÃO agenda auto-refresh |
+| `1..60` | Minutos fixos | POST `/api/connections/{id}/refresh` a cada N min |
+| Botão ↻ manual | — | Continua refresh de TODAS as conexões |
 
 ## Decisões
 

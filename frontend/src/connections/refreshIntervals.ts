@@ -15,7 +15,10 @@ export const GLOBAL_INTERVAL_OPTIONS = [
   ["3600", "60 min"],
 ] as const;
 
-/** Per-connection select: minutes as string, or "global". */
+/**
+ * Per-connection select: minutes as string, "global" (null), or "0" (Desligada).
+ * Contract: null = Global, 0 = Desligada, 1..60 = minutes.
+ */
 export const CONN_INTERVAL_OPTIONS = [
   ["1", "1 min"],
   ["5", "5 min"],
@@ -24,6 +27,7 @@ export const CONN_INTERVAL_OPTIONS = [
   ["30", "30 min"],
   ["60", "60 min"],
   ["global", "Global"],
+  ["0", "Desligada"],
 ] as const;
 
 export type ConnIntervalValue = (typeof CONN_INTERVAL_OPTIONS)[number][0];
@@ -52,21 +56,38 @@ export function computeNextRefreshAt(
 
 export function intervalToSelectValue(minutes: number | null | undefined): ConnIntervalValue {
   if (minutes == null) return "global";
+  if (minutes === 0) return "0";
   const s = String(minutes);
   return CONN_INTERVAL_OPTIONS.some(([v]) => v === s)
     ? (s as ConnIntervalValue)
     : "global";
 }
 
+/** null = Global; 0 = Desligada; positive = minutes. */
 export function selectValueToMinutes(value: string): number | null {
   if (value === "global" || value === "") return null;
+  if (value === "0") return 0;
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 export function connIntervalBadge(minutes: number | null | undefined): string {
   if (minutes == null) return "Global";
+  if (minutes === 0) return "Desligada";
   return `${minutes} min`;
+}
+
+/** CSS modifier for Contas salvas interval badge. */
+export function connIntervalBadgeClass(minutes: number | null | undefined): string {
+  if (minutes == null) return "badge interval interval-global";
+  if (minutes === 0) return "badge interval interval-off";
+  return "badge interval";
+}
+
+export function connIntervalTitle(minutes: number | null | undefined): string | undefined {
+  if (minutes == null) return "Usa o intervalo Global da lista";
+  if (minutes === 0) return "Auto-refresh desligado nesta conexão";
+  return undefined;
 }
 
 export function dateTimeLabel(value: string | number | Date | null): string {

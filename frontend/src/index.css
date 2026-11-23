@@ -3805,8 +3805,9 @@ body.modal-open {
 
 .perf-queries .table-head,
 .perf-queries .table-row {
-  /* QUERY WH EXEC TEMPO DATA/HORA SINAL — min widths enable horizontal scroll */
+  /* TIPO QUERY WH EXEC TEMPO DATA/HORA SINAL — min widths enable horizontal scroll */
   grid-template-columns:
+    minmax(5.25rem, 0.55fr)
     minmax(12rem, 2.2fr)
     minmax(6rem, 0.95fr)
     minmax(3.25rem, 0.45fr)
@@ -3817,7 +3818,55 @@ body.modal-open {
   padding: 0.55rem 0.85rem;
   align-items: center;
   min-height: var(--perf-query-row-h, 3.6rem);
-  min-width: 42rem;
+  min-width: 48rem;
+}
+
+.perf-kind-cell {
+  min-width: 0;
+}
+
+.perf-kind-badge {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: #14181c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.perf-kind-badge.kind-streamlit {
+  color: #29b5e8;
+  border-color: #1a4a5c;
+  background: #0f1a22;
+}
+
+.perf-kind-badge.kind-call {
+  color: #c4a0f0;
+  border-color: #4a3860;
+  background: #181422;
+}
+
+.perf-kind-badge.kind-service,
+.perf-kind-badge.kind-code-bundle,
+.perf-kind-badge.kind-compute_pool {
+  color: #f5a524;
+  border-color: #5a4520;
+  background: #1a1610;
+}
+
+.perf-kind-badge.kind-query {
+  color: #8b939e;
+  border-color: #2a2f36;
+  background: #14181c;
 }
 
 

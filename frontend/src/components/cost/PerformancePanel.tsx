@@ -554,19 +554,7 @@ export function PerformancePanel({
           {chartRows.length ? (
             <div className="chart-wrap cost-chart perf-load-chart">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={chartRows}
-                  style={{ cursor: "pointer" }}
-                  onClick={(state) => {
-                    const iso =
-                      (state?.activePayload?.[0]?.payload as { dateIso?: string } | undefined)
-                        ?.dateIso ??
-                      (typeof state?.activeLabel === "string"
-                        ? chartRows.find((r) => r.date === state.activeLabel)?.dateIso
-                        : undefined);
-                    if (iso) toggleDay(iso);
-                  }}
-                >
+                <BarChart data={chartRows} style={{ cursor: "pointer" }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" vertical={false} />
                   <XAxis dataKey="date" stroke="#8B939E" tick={{ fontSize: 11 }} />
                   <YAxis stroke="#8B939E" tick={{ fontSize: 11 }} />
@@ -581,7 +569,19 @@ export function PerformancePanel({
                     }}
                   />
                   <Legend />
-                  <Bar dataKey="running" name="Running" fill="#29B5E8" stackId="a" cursor="pointer">
+                  <Bar
+                    dataKey="running"
+                    name="Running"
+                    fill="#29B5E8"
+                    stackId="a"
+                    cursor="pointer"
+                    onClick={(data) => {
+                      const iso =
+                        (data as { payload?: { dateIso?: string } })?.payload?.dateIso ??
+                        (data as { dateIso?: string })?.dateIso;
+                      if (iso) toggleDay(iso);
+                    }}
+                  >
                     {chartRows.map((entry) => {
                       const active = selectedDay === entry.dateIso;
                       const dimmed = Boolean(selectedDay) && !active;
@@ -594,7 +594,19 @@ export function PerformancePanel({
                       );
                     })}
                   </Bar>
-                  <Bar dataKey="queued" name="Queued" fill="#f5a524" stackId="a" cursor="pointer">
+                  <Bar
+                    dataKey="queued"
+                    name="Queued"
+                    fill="#f5a524"
+                    stackId="a"
+                    cursor="pointer"
+                    onClick={(data) => {
+                      const iso =
+                        (data as { payload?: { dateIso?: string } })?.payload?.dateIso ??
+                        (data as { dateIso?: string })?.dateIso;
+                      if (iso) toggleDay(iso);
+                    }}
+                  >
                     {chartRows.map((entry) => {
                       const active = selectedDay === entry.dateIso;
                       const dimmed = Boolean(selectedDay) && !active;

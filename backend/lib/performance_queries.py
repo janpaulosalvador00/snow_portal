@@ -60,28 +60,29 @@ def _recommend_warehouse(*, mean_running: float, mean_queued: float, days_with_q
 
 
 def _recommend_query(*, executions: int, spill_ratio: float, total_elapsed_ms: float) -> dict[str, str]:
+    # Short copy for UI badges; longer detail can live in tooltips on the client.
     if spill_ratio >= _SPILL_RATIO_HIGH:
         return {
             "level": "bad",
             "code": "remote_spill",
-            "text": "Spill remoto alto — considerar warehouse maior ou processar em lotes menores",
+            "text": "Spill remoto — WH maior ou lotes menores",
         }
     if executions >= 20 and total_elapsed_ms >= 30 * 60 * 1000:
         return {
             "level": "warn",
             "code": "repeated_heavy",
-            "text": "Muito repetida e cara — priorizar otimização dessa query",
+            "text": "Muito repetida — priorizar otimização",
         }
     if total_elapsed_ms >= 30 * 60 * 1000:
         return {
             "level": "warn",
             "code": "long_running",
-            "text": "Tempo acumulado alto no período — revisar plano / tamanho do warehouse",
+            "text": "Tempo alto — revisar plano / WH",
         }
     return {
         "level": "neutral",
         "code": "none",
-        "text": "Sem sinal de memória ou repetição crítica",
+        "text": "—",
     }
 
 

@@ -11,6 +11,24 @@ import { ALERTS_BADGE_EVENT, getAlerts } from "../api/alerts";
 import { useAuth } from "../auth/AuthContext";
 import { RefreshProvider, useRefresh } from "../refresh/RefreshContext";
 
+const SIDEBAR_COLLAPSED_KEY = "snow-portal.sidebar-collapsed";
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSidebarCollapsed(collapsed: boolean) {
+  try {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
 function AlertsBadgeRefresher() {
   const { refreshToken } = useRefresh();
 
@@ -41,15 +59,37 @@ function NavIcon({ children }: { children: ReactNode }) {
   );
 }
 
+function ChevronIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      className="sidebar-toggle-icon"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ transform: collapsed ? "rotate(180deg)" : undefined }}
+    >
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  );
+}
+
 export function AppShell() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [alertsCount, setAlertsCount] = useState(0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
   const [adminMenuPosition, setAdminMenuPosition] = useState({ top: 0, left: 0 });
   const adminTriggerRef = useRef<HTMLButtonElement>(null);
   const closeTimerRef = useRef<number | null>(null);
   const adminActive = location.pathname === "/admin" || location.pathname === "/canais";
+  const tip = (label: string) => (sidebarCollapsed ? label : undefined);
 
   useEffect(() => {
     const onBadge = (event: Event) => {
@@ -91,7 +131,15 @@ export function AppShell() {
       window.removeEventListener("scroll", placeAdminMenu, true);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [adminMenuOpen]);
+  }, [adminMenuOpen, sidebarCollapsed]);
+
+  function toggleSidebar() {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      writeSidebarCollapsed(next);
+      return next;
+    });
+  }
 
   function openAdminMenu() {
     if (closeTimerRef.current != null) window.clearTimeout(closeTimerRef.current);
@@ -118,36 +166,58 @@ export function AppShell() {
 
   return (
     <RefreshProvider>
-    <div className="app-shell">
+    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <aside className="sidebar" onWheel={onSidebarWheel}>
-        <div className="brand">Snow Portal</div>
-        <div className="user-meta">Time: {user?.team_name || "Suporte"}</div>
+        <div className="sidebar-top">
+          <div className="brand" title={sidebarCollapsed ? "Snow Portal" : undefined}>
+            <span className="brand-full">Snow Portal</span>
+            <span className="brand-mark" aria-hidden="true">
+              SP
+            </span>
+          </div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? "Expandir menu" : "Recolher menu"}
+            aria-expanded={!sidebarCollapsed}
+            title={sidebarCollapsed ? "Expandir menu" : "Recolher menu"}
+          >
+            <ChevronIcon collapsed={sidebarCollapsed} />
+          </button>
+        </div>
+        <div className="user-meta" title={sidebarCollapsed ? `Time: ${user?.team_name || "Suporte"}` : undefined}>
+          <span className="user-meta-full">Time: {user?.team_name || "Suporte"}</span>
+          <span className="user-meta-mark" aria-hidden="true">
+            {(user?.team_name || "Suporte").slice(0, 1).toUpperCase()}
+          </span>
+        </div>
         <nav>
-          <NavLink to="/" end>
+          <NavLink to="/" end title={tip("Início")}>
             <NavIcon>
               <path d="M3 10.5 12 3l9 7.5" />
               <path d="M5 10v10h14V10" />
               <path d="M10 20v-6h4v6" />
             </NavIcon>
-            Início
+            <span className="nav-label">Início</span>
           </NavLink>
-          <NavLink to="/conexoes">
+          <NavLink to="/conexoes" title={tip("Conexões")}>
             <NavIcon>
               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
             </NavIcon>
-            Conexões
+            <span className="nav-label">Conexões</span>
           </NavLink>
-          <NavLink to="/tokens">
+          <NavLink to="/tokens" title={tip("Tokens")}>
             <NavIcon>
               <circle cx="7.5" cy="15.5" r="4.5" />
               <path d="m10.7 12.3 8.8-8.8" />
               <path d="m16 7 3 3" />
               <path d="m18.5 4.5 2 2" />
             </NavIcon>
-            Tokens
+            <span className="nav-label">Tokens</span>
           </NavLink>
-          <NavLink to="/cost-management">
+          <NavLink to="/cost-management" title={tip("Cost Management")}>
             <NavIcon>
               <path d="M4 19V5" />
               <path d="M4 19h16" />
@@ -155,14 +225,14 @@ export function AppShell() {
               <path d="M12 17V7" />
               <path d="M16 17v-4" />
             </NavIcon>
-            Cost Management
+            <span className="nav-label">Cost Management</span>
           </NavLink>
-          <NavLink to="/alerts">
+          <NavLink to="/alerts" title={tip("Alerts")}>
             <NavIcon>
               <path d="M12 3a6 6 0 0 0-6 6c0 4-2 5-2 5h16s-2-1-2-5a6 6 0 0 0-6-6z" />
               <path d="M10.5 20a1.8 1.8 0 0 0 3 0" />
             </NavIcon>
-            Alerts
+            <span className="nav-label">Alerts</span>
             {alertsCount > 0 ? (
               <span
                 className="nav-badge"
@@ -185,6 +255,7 @@ export function AppShell() {
                 aria-expanded={adminMenuOpen}
                 aria-haspopup="menu"
                 aria-controls="admin-nav-flyout"
+                title={tip("Administração")}
                 onFocus={openAdminMenu}
                 onClick={openAdminMenu}
               >
@@ -194,7 +265,7 @@ export function AppShell() {
                   <path d="M19 4v4" />
                   <path d="M17 6h4" />
                 </NavIcon>
-                Administração
+                <span className="nav-label">Administração</span>
               </button>
             </div>
           ) : null}
@@ -227,7 +298,13 @@ export function AppShell() {
               document.body,
             )
           : null}
-        <button type="button" className="btn ghost logout" onClick={() => void logout()}>
+        <button
+          type="button"
+          className="btn ghost logout"
+          onClick={() => void logout()}
+          title={tip("Sair")}
+          aria-label="Sair"
+        >
           <svg
             className="logout-icon"
             width="16"
@@ -244,7 +321,7 @@ export function AppShell() {
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
-          Sair
+          <span className="nav-label">Sair</span>
         </button>
       </aside>
       <main className="main">

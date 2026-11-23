@@ -30,12 +30,6 @@ export function parseDateRangeFromParams(params: URLSearchParams): DateRangeValu
   return { mode: "preset", days: 28 };
 }
 
-export function parseWarehouseParam(raw: string | null): string {
-  const v = (raw || "").trim();
-  if (!v || v.toLowerCase() === "all") return "All";
-  return v;
-}
-
 export function parseTopParam(raw: string | null): PerfTopValue {
   const v = (raw || "").trim().toLowerCase();
   if ((PERF_TOP_VALUES as readonly string[]).includes(v)) return v as PerfTopValue;
@@ -50,7 +44,6 @@ export type CostUrlState = {
   tabSlug: string;
   connectionId: number | "";
   dateRange: DateRangeValue;
-  warehouse: string;
   top: PerfTopValue;
   day: string | null;
   usageType: string;
@@ -73,10 +66,6 @@ export function buildCostSearch(state: CostUrlState): string {
   } else {
     p.set("start", state.dateRange.start);
     p.set("end", state.dateRange.end);
-  }
-
-  if (state.warehouse && state.warehouse !== "All") {
-    p.set("warehouse", state.warehouse);
   }
 
   if (state.top && state.top !== "10") {

@@ -255,26 +255,6 @@ function formatLastExec(iso: string | null | undefined): string | null {
   return formatFetchedAt(iso);
 }
 
-function FetchedAtLabel({
-  fetchedAt,
-  cached,
-}: {
-  fetchedAt?: string | null;
-  cached?: boolean;
-}) {
-  const label = formatFetchedAt(fetchedAt);
-  if (!label) return null;
-  return (
-    <p
-      className="muted perf-fetched-at"
-      title={cached ? "Snapshot em cache" : "Atualizado agora"}
-    >
-      Executado em {label}
-      {cached ? " (cache)" : ""}
-    </p>
-  );
-}
-
 function sliceQueries<T>(rows: T[], limit: string): T[] {
   if (limit === "all") return rows;
   const n = Number(limit);
@@ -344,7 +324,6 @@ export function PerformancePanel({
 
         <div className="perf-card">
           <h4>Diagnóstico por warehouse</h4>
-          <FetchedAtLabel fetchedAt={data.fetched_at} cached={data.cached} />
           {data.warehouses?.length ? (
             <div
               className={
@@ -388,7 +367,6 @@ export function PerformancePanel({
             <p className="muted perf-card-desc">
               Fonte: ACCOUNT_USAGE.QUERY_HISTORY · agrupamento por query_hash quando repetida
             </p>
-            <FetchedAtLabel fetchedAt={data.fetched_at} cached={data.cached} />
           </div>
           <div className="perf-queries-header-right">
             {data.duration_buckets && data.duration_buckets.some((b) => b.query_count > 0) ? (

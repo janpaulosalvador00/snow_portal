@@ -791,7 +791,12 @@ export function CostManagementPage() {
   return (
     <div className="cost-page">
       <div className="cost-sticky-nav">
-        <CostPageHeader contextLabel={warehousePill} creditsUsed={headerCreditsUsed} />
+        <CostPageHeader
+          contextLabel={warehousePill}
+          creditsUsed={headerCreditsUsed}
+          updatedAt={tab === "Performance" ? perf?.fetched_at : null}
+          updatedCached={tab === "Performance" ? Boolean(perf?.cached) : false}
+        />
         <CostTabs tab={tab} onTab={setTab} />
       </div>
 

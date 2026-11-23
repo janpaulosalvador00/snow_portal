@@ -10,15 +10,19 @@ export function refreshTimeLabel(iso: string | null): string {
   })}`;
 }
 
-/** Small ↻ that refreshes every screen/tab of the active connection. */
+/** Small ↻ that refreshes every accessible connection and notifies all screens. */
 export function RefreshIconButton({ disabled }: { disabled?: boolean }) {
-  const { refreshAll, refreshing, lastRefreshedAt } = useRefresh();
+  const { refreshAll, refreshing, refreshProgress, lastRefreshedAt } = useRefresh();
   const stamp = refreshTimeLabel(lastRefreshedAt);
+  const progressLabel =
+    refreshProgress && refreshProgress.total > 0
+      ? ` (${refreshProgress.done}/${refreshProgress.total})`
+      : "";
   const title = refreshing
-    ? "Atualizando todas as telas…"
+    ? `Atualizando todas as conexões e telas…${progressLabel}`
     : stamp
-      ? `Atualizar todas as telas e guias — atualizado em ${stamp}`
-      : "Atualizar todas as telas e guias";
+      ? `Atualizar todas as conexões e telas — atualizado em ${stamp}`
+      : "Atualizar todas as conexões e telas";
 
   return (
     <button

@@ -33,7 +33,6 @@ import {
   parseDateRangeFromParams,
   parseDayParam,
   parseTopParam,
-  parseWarehouseParam,
   type PerfTopValue,
 } from "../components/cost/costUrlParams";
 import { StackedConsumptionChart } from "../components/cost/StackedConsumptionChart";
@@ -263,9 +262,6 @@ export function CostManagementPage() {
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [anom, setAnom] = useState<AnomaliesResp | null>(null);
   const [perf, setPerf] = useState<PerformanceResp | null>(null);
-  const [perfWarehouse, setPerfWarehouse] = useState(() =>
-    parseWarehouseParam(searchParams.get("warehouse")),
-  );
   const [perfTop, setPerfTop] = useState<PerfTopValue>(() =>
     parseTopParam(searchParams.get("top")),
   );
@@ -306,7 +302,6 @@ export function CostManagementPage() {
         tabSlug: tabToSlug(activeTab),
         connectionId,
         dateRange,
-        warehouse: perfWarehouse,
         top: perfTop,
         day: perfDay,
         usageType,
@@ -319,7 +314,6 @@ export function CostManagementPage() {
       connectionId,
       dateKey,
       dateRange,
-      perfWarehouse,
       perfTop,
       perfDay,
       usageType,
@@ -363,7 +357,6 @@ export function CostManagementPage() {
       setActiveConnectionId(urlConn);
     }
     setDateRange(parseDateRangeFromParams(searchParams));
-    setPerfWarehouse(parseWarehouseParam(searchParams.get("warehouse")));
     setPerfTop(parseTopParam(searchParams.get("top")));
     setPerfDay(parseDayParam(searchParams.get("day")));
     const usage = searchParams.get("usage");
@@ -675,24 +668,11 @@ export function CostManagementPage() {
         if (signal.aborted) return;
         setAnom(res);
       } else if (activeTab === "Performance") {
-        const perfQs = new URLSearchParams(qs);
-        if (perfWarehouse && perfWarehouse !== "All") {
-          perfQs.set("warehouse", perfWarehouse);
-        }
-        const res = await api<PerformanceResp>(`/api/cost/performance?${perfQs}`, {
+        const res = await api<PerformanceResp>(`/api/cost/performance?${qs}`, {
           signal,
         });
         if (signal.aborted) return;
         setPerf(res);
-        // Keep the selected warehouse if still present; otherwise reset to All.
-        const opts = res.warehouse_options ?? [];
-        if (
-          perfWarehouse !== "All" &&
-          opts.length > 0 &&
-          !opts.some((n) => n.toUpperCase() === perfWarehouse.toUpperCase())
-        ) {
-          setPerfWarehouse("All");
-        }
       } else if (activeTab === "Resource Monitors") {
         const res = await api<MonitorsResp>(
           `/api/cost/resource-monitors?connection_id=${id}`,
@@ -740,7 +720,6 @@ export function CostManagementPage() {
     usageType,
     serviceType,
     accountFilter,
-    perfWarehouse,
     refreshToken,
   ]);
 
@@ -998,23 +977,6 @@ export function CostManagementPage() {
                   disabled
                 />
               </>
-            ) : null}
-            {activeTab === "Performance" ? (
-              <FilterPill
-                label="Warehouse"
-                value={perfWarehouse}
-                onChange={(v) => {
-                  setPerfWarehouse(v);
-                  setPerfDay(null);
-                }}
-                options={[
-                  { value: "All", label: "All Warehouses" },
-                  ...(perf?.warehouse_options ?? []).map((n) => ({
-                    value: n,
-                    label: n,
-                  })),
-                ]}
-              />
             ) : null}
             {activeTab !== "Resource Monitors" ? (
               <RefreshIconButton disabled={loading} />

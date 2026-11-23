@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 
 const TABS = [
-  "Organization Overview",
   "Account Overview",
   "Consumption",
   "Anomalies",

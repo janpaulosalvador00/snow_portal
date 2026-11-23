@@ -199,12 +199,6 @@ type BudgetsResp = {
   detail?: string;
 };
 
-type OrgResp = {
-  available: boolean;
-  items: { usage_date: string; account_name: string; credits_used: number }[];
-  note: string | null;
-};
-
 const DEFAULT_SERVICE_TYPE = "WAREHOUSE_METERING";
 const DEFAULT_SERVICE_OPTIONS: FilterPillOption[] = [
   { value: "All", label: "All" },
@@ -244,7 +238,6 @@ export function CostManagementPage() {
   const [perfWarehouse, setPerfWarehouse] = useState("All");
   const [monitors, setMonitors] = useState<MonitorsResp | null>(null);
   const [budgets, setBudgets] = useState<BudgetsResp | null>(null);
-  const [org, setOrg] = useState<OrgResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<CostTab>("Consumption");
@@ -416,7 +409,6 @@ export function CostManagementPage() {
       setAnom(null);
       setMonitors(null);
       setBudgets(null);
-      setOrg(null);
       setOrgAccountsNote(null);
       setStackBy("service");
       setLoading(false);
@@ -569,12 +561,6 @@ export function CostManagementPage() {
         });
         if (signal.aborted) return;
         setBudgets(res);
-      } else if (tab === "Organization Overview") {
-        const res = await api<OrgResp>(`/api/cost/organization-overview?${qs}`, {
-          signal,
-        });
-        if (signal.aborted) return;
-        setOrg(res);
       }
     } catch (e) {
       if (signal.aborted || isAbortError(e)) return;
@@ -584,7 +570,6 @@ export function CostManagementPage() {
       setPerf(null);
       setMonitors(null);
       setBudgets(null);
-      setOrg(null);
       setOrgAccountsNote(null);
       setStackBy("service");
       setErr(e instanceof ApiError ? e.message : "Falha ao carregar Cost Management.");
@@ -636,8 +621,7 @@ export function CostManagementPage() {
     (tab === "Anomalies" && !!anom) ||
     (tab === "Performance" && !!perf) ||
     (tab === "Resource Monitors" && !!monitors) ||
-    (tab === "Budgets" && !!budgets) ||
-    (tab === "Organization Overview" && !!org);
+    (tab === "Budgets" && !!budgets);
   // Pill = warehouse saved on the connection only (never role / fake COMPUTE_WH).
   const warehousePill = activeConn
     ? activeConn.warehouse?.trim() || "WH auto"
@@ -713,10 +697,7 @@ export function CostManagementPage() {
           ) + 1,
         );
   const showTimeNonConsumption =
-    tab === "Account Overview" ||
-    tab === "Anomalies" ||
-    tab === "Performance" ||
-    tab === "Organization Overview";
+    tab === "Account Overview" || tab === "Anomalies" || tab === "Performance";
 
   const relatedInfo = connAccount?.connId === connectionId ? connAccount.info : null;
   const relatedLabel =
@@ -738,19 +719,6 @@ export function CostManagementPage() {
         .filter(Boolean)
         .join(" · ")
     : undefined;
-
-  /** Org Overview filters its rows client-side by the connection-derived account. */
-  const orgItems = useMemo(() => {
-    const items = org?.items ?? [];
-    if (
-      accountFilter === ALL_ACCOUNTS ||
-      accountFilter === PENDING_ACCOUNT ||
-      accountFilter === UNKNOWN_ACCOUNT
-    ) {
-      return items;
-    }
-    return items.filter((r) => sameAccount(r.account_name, accountFilter));
-  }, [org, accountFilter]);
 
   /** Connection picker only — Snowflake account is derived from the connection (no redundant locator UI). */
   const connectionSelect = activeConn ? (
@@ -1075,30 +1043,6 @@ export function CostManagementPage() {
             </div>
           ) : null}
 
-          {tab === "Organization Overview" && org ? (
-            <div className={`cost-tab-body${loading ? " is-refreshing" : ""}`}>
-              {org.note ? <div className="info-box">{org.note}</div> : null}
-              {org.items.length && !orgItems.length ? (
-                <div className="info-box">Nenhum consumo desta conta no período.</div>
-              ) : null}
-              {orgItems.length ? (
-                <div className="table cost-table cost-table-org">
-                  <div className="table-head">
-                    <span>DATE</span>
-                    <span>ACCOUNT</span>
-                    <span>CREDITS</span>
-                  </div>
-                  {orgItems.map((r, i) => (
-                    <div key={`${r.usage_date}-${r.account_name}-${i}`} className="table-row">
-                      <span>{r.usage_date}</span>
-                      <span>{r.account_name}</span>
-                      <span>{r.credits_used.toFixed(1)}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
         </>
       )}
     </div>

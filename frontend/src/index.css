@@ -202,23 +202,9 @@ h3 {
   margin-bottom: 0.25rem;
 }
 
+/* Collapsed desktop: hide team meta mark (initial letter under the chevron). */
 .app-shell.sidebar-collapsed .user-meta {
-  padding: 0;
-  margin-bottom: 0.15rem;
-  display: grid;
-  place-items: center;
-}
-
-.app-shell.sidebar-collapsed .user-meta-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  font-size: 0.68rem;
-  font-weight: 600;
+  display: none;
 }
 
 .sidebar nav {
@@ -1740,6 +1726,9 @@ select:focus {
   .app-shell.sidebar-collapsed .sidebar-top {
     flex-direction: row;
     justify-content: space-between;
+  }
+  .app-shell.sidebar-collapsed .user-meta {
+    display: block;
   }
   .app-shell.sidebar-collapsed .brand-full,
   .app-shell.sidebar-collapsed .user-meta-full,

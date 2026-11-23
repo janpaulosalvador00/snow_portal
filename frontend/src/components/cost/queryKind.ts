@@ -40,6 +40,32 @@ export const QUERY_KIND_OPTIONS: readonly QueryKind[] = [
 /** Max length for custom ("Outro") labels. */
 export const QUERY_KIND_CUSTOM_MAX = 24;
 
+/** Default accent colors for known kinds (badge text / border tint). */
+export const QUERY_KIND_DEFAULT_COLORS: Record<QueryKind, string> = {
+  STREAMLIT: "#29b5e8",
+  CALL: "#c4a0f0",
+  QUERY: "#8b939e",
+  "CODE BUNDLE": "#f5a524",
+  SERVICE: "#f5a524",
+  COMPUTE_POOL: "#f5a524",
+};
+
+export const QUERY_KIND_CUSTOM_DEFAULT_COLOR = "#9ec9b0";
+
+/** Swatches offered in the TIPO edit modal. */
+export const QUERY_KIND_COLOR_SWATCHES: readonly string[] = [
+  "#29b5e8",
+  "#c4a0f0",
+  "#f5a524",
+  "#8b939e",
+  "#9ec9b0",
+  "#e86b6b",
+  "#7ad3a0",
+  "#f0c14a",
+  "#6cb6ff",
+  "#d4a5ff",
+] as const;
+
 /** CSS modifier from a kind label (`CODE BUNDLE` → `kind-code-bundle`). */
 export function queryKindCssClass(kind: string): string {
   const slug = kind
@@ -52,6 +78,33 @@ export function queryKindCssClass(kind: string): string {
   );
   if (slug && known.has(slug)) return `kind-${slug}`;
   return "kind-custom";
+}
+
+/** Default accent for a kind label (known or custom). */
+export function defaultColorForQueryKind(kind: string): string {
+  const k = kind.replace(/\s+/g, " ").trim().toUpperCase();
+  for (const opt of QUERY_KIND_OPTIONS) {
+    if (opt.toUpperCase() === k) return QUERY_KIND_DEFAULT_COLORS[opt];
+  }
+  return QUERY_KIND_CUSTOM_DEFAULT_COLOR;
+}
+
+/** Normalize #RRGGBB / #RGB; invalid → null. */
+export function normalizeQueryKindColor(raw: string | null | undefined): string | null {
+  const v = (raw || "").trim();
+  if (!v) return null;
+  const short = /^#([0-9a-f]{3})$/i.exec(v);
+  if (short) {
+    const [r, g, b] = short[1].split("");
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  if (/^#[0-9a-f]{6}$/i.test(v)) return v.toLowerCase();
+  return null;
+}
+
+/** Effective accent: override color when set, else kind default. */
+export function resolveQueryKindColor(kind: string, colorOverride?: string | null): string {
+  return normalizeQueryKindColor(colorOverride) || defaultColorForQueryKind(kind);
 }
 
 /** Normalize a custom label; empty → null. */

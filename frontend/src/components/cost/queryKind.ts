@@ -27,6 +27,39 @@ export type QueryKind =
   | "CODE BUNDLE"
   | "COMPUTE_POOL";
 
+/** Known kinds offered in the editable TIPO select (order = UI order). */
+export const QUERY_KIND_OPTIONS: readonly QueryKind[] = [
+  "STREAMLIT",
+  "CALL",
+  "QUERY",
+  "CODE BUNDLE",
+  "SERVICE",
+  "COMPUTE_POOL",
+] as const;
+
+/** Max length for custom ("Outro") labels. */
+export const QUERY_KIND_CUSTOM_MAX = 24;
+
+/** CSS modifier from a kind label (`CODE BUNDLE` → `kind-code-bundle`). */
+export function queryKindCssClass(kind: string): string {
+  const slug = kind
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  const known = new Set(
+    QUERY_KIND_OPTIONS.map((k) => k.replace(/\s+/g, "-").toLowerCase()),
+  );
+  if (slug && known.has(slug)) return `kind-${slug}`;
+  return "kind-custom";
+}
+
+/** Normalize a custom label; empty → null. */
+export function normalizeCustomQueryKind(raw: string): string | null {
+  const v = raw.replace(/\s+/g, " ").trim().toUpperCase().slice(0, QUERY_KIND_CUSTOM_MAX);
+  return v || null;
+}
+
 const STREAMLIT_TYPE = /STREAMLIT/i;
 const CODE_BUNDLE_TYPE = /CODE[_ ]?BUNDLE/i;
 const SERVICE_TYPE = /SERVICE/i;
@@ -68,4 +101,15 @@ export function classifyQueryKind(
   if (text && CALL_TEXT.test(text)) return "CALL";
 
   return "QUERY";
+}
+
+/** Effective display kind: override when present, else classifier. */
+export function effectiveQueryKind(
+  queryType: string | null | undefined,
+  queryPreview: string | null | undefined,
+  override?: string | null,
+): string {
+  const o = (override || "").trim();
+  if (o) return o;
+  return classifyQueryKind(queryType, queryPreview);
 }

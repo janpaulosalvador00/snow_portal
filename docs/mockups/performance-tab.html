@@ -312,7 +312,7 @@
         </div>
       </div>
 
-      <div class="section-title">Queries <small>lentas, repetidas e spill remoto</small></div>
+      <div class="section-title">Queries</div>
       <div class="card">
         <h2>Top queries do período</h2>
         <p class="desc">Fonte: ACCOUNT_USAGE.QUERY_HISTORY · agrupamento por query_hash quando repetida</p>
@@ -323,7 +323,6 @@
               <th>Warehouse</th>
               <th>Execuções</th>
               <th>Tempo acum.</th>
-              <th>Spill remoto</th>
               <th>Recomendação</th>
             </tr>
           </thead>
@@ -336,7 +335,6 @@
               <td>COMPUTE_WH</td>
               <td>128</td>
               <td>4h 12m</td>
-              <td>baixo</td>
               <td><span class="badge warn">Priorizar otimização (muito repetida)</span></td>
             </tr>
             <tr>
@@ -347,7 +345,6 @@
               <td>COMPUTE_WH</td>
               <td>6</td>
               <td>1h 40m</td>
-              <td>alto</td>
               <td><span class="badge bad">Spill remoto — considerar WH maior ou lotes menores</span></td>
             </tr>
             <tr>
@@ -358,7 +355,6 @@
               <td>WH_TRANSFORM</td>
               <td>14</td>
               <td>52m</td>
-              <td>nenhum</td>
               <td><span class="badge neutral">Sem sinal de memória</span></td>
             </tr>
           </tbody>

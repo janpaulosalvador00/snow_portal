@@ -150,8 +150,8 @@ export function PerformancePanel({
             Running = queries em execução · Queued = fila por sobrecarga
           </p>
           {chartRows.length ? (
-            <div className="chart-wrap cost-chart">
-              <ResponsiveContainer width="100%" height={220}>
+            <div className="chart-wrap cost-chart perf-load-chart">
+              <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartRows}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" vertical={false} />
                   <XAxis dataKey="date" stroke="#8B939E" tick={{ fontSize: 11 }} />
@@ -210,9 +210,7 @@ export function PerformancePanel({
         </div>
       </div>
 
-      <h3 className="perf-section-title">
-        Queries <small>lentas, repetidas e spill remoto</small>
-      </h3>
+      <h3 className="perf-section-title">Queries</h3>
       <div className="perf-card">
         <div className="perf-queries-header">
           <div className="perf-queries-heading">
@@ -250,7 +248,6 @@ export function PerformancePanel({
                 <span>WAREHOUSE</span>
                 <span>EXEC.</span>
                 <span>TEMPO</span>
-                <span>SPILL</span>
                 <span>RECOMENDAÇÃO</span>
               </div>
               {visibleQueries.map((q) => (
@@ -266,7 +263,6 @@ export function PerformancePanel({
                   <span>{q.warehouse_name || "—"}</span>
                   <span>{q.executions}</span>
                   <span>{q.total_elapsed_label}</span>
-                  <span>{q.spill_label}</span>
                   <span>
                     <span className={badgeClass(q.recommendation?.level)}>
                       {q.recommendation?.text || "—"}

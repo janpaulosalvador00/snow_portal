@@ -3660,9 +3660,21 @@ body.modal-open {
 
 .badge.interval,
 .conn-interval-badge {
+  color: var(--ok);
+  background: rgba(61, 154, 106, 0.12);
+  border: 1px solid rgba(61, 154, 106, 0.28);
+}
+
+.badge.interval.interval-global {
   color: var(--accent);
   background: rgba(41, 181, 232, 0.12);
-  border: 1px solid rgba(41, 181, 232, 0.28);
+  border-color: rgba(41, 181, 232, 0.28);
+}
+
+.badge.interval.interval-off {
+  color: #a8b0ba;
+  background: rgba(168, 176, 186, 0.12);
+  border-color: rgba(168, 176, 186, 0.28);
 }
 
 .hint-note {

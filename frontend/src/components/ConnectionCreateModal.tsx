@@ -372,6 +372,10 @@ export function ConnectionCreateModal({
         {globalIntervalHelp(globalIntervalSeconds)}). Se a Global estiver Desligada, esta conexão
         não atualiza automaticamente.
       </>
+    ) : String(interval) === "0" ? (
+      <>
+        <em>Desligada</em>: esta conexão não atualiza automaticamente, independente da barra Global.
+      </>
     ) : (
       <>
         Esta conexão atualizará a cada <em>{interval} min</em>.
@@ -626,19 +630,23 @@ export function ConnectionCreateModal({
             </label>
 
             <label>
-              Time (ACL)
+              Time
               <select
-                value={teamId}
+                value={teamId === "" ? "" : String(teamId)}
                 onChange={(e) =>
                   onTeamIdChange(e.target.value ? Number(e.target.value) : "")
                 }
               >
+                <option value="">Todos</option>
                 {teams.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}
                   </option>
                 ))}
               </select>
+              <span className="field-help">
+                Todos = qualquer time pode acessar esta conexão (team_id null).
+              </span>
             </label>
 
             {err ? (

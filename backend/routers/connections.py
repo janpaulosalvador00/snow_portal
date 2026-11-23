@@ -88,8 +88,9 @@ class ConnectionCreate(SecretInput):
     authenticator_url: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
-    # Minutes; null = follow Contas salvas global interval.
+    # Auto-refresh minutes: null=Global, 0=Desligada, 1..60=fixed.
     refresh_interval: int | None = None
+    # Team ACL: null = Todos (any team); int = that team. Omitted → caller's team.
     team_id: int | None = None
     options: dict[str, Any] | None = None
 
@@ -109,7 +110,9 @@ class OAuthStart(BaseModel):
     name: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
+    # Auto-refresh minutes: null=Global, 0=Desligada, 1..60=fixed.
     refresh_interval: int | None = None
+    # Team ACL: null = Todos (any team); int = that team. Omitted → caller's team.
     team_id: int | None = None
     connection_id: int | None = None
     return_to: str | None = None
@@ -127,10 +130,16 @@ class ConnectionUpdate(SecretInput):
     authenticator_url: str | None = None
     warehouse: str | None = None
     role_name: str | None = None
+    # Auto-refresh minutes: null=Global, 0=Desligada, 1..60=fixed.
+    # Set Global via clear_refresh_interval=true (JSON null alone is omitted on PATCH).
     refresh_interval: int | None = None
     clear_refresh_interval: bool = False
     clear_warehouse: bool = False
     clear_role: bool = False
+    # Team ACL: send team_id=<int> to restrict; clear_team=true (or team_id null in
+    # body) → Todos. Omitted fields leave the current ACL unchanged.
+    team_id: int | None = None
+    clear_team: bool = False
     revalidate: bool = True
 
 
@@ -183,6 +192,19 @@ def _require_secret(user: dict, method: str, body: SecretInput) -> tuple[str | N
     return secret, origin
 
 
+def _resolve_create_team_id(body: BaseModel, user: dict) -> int | None:
+    """Resolve team ACL for create / OAuth start.
+
+    Contract:
+      - ``team_id`` present and ``null`` → Todos (no restriction)
+      - ``team_id`` present and int → that team
+      - field omitted → caller's ``user.team_id`` (may also be null / Todos)
+    """
+    if "team_id" in body.model_fields_set:
+        return body.team_id  # type: ignore[attr-defined]
+    return user.get("team_id")
+
+
 def _serialize(row: dict) -> dict:
     return {
         "id": row["id"],
@@ -194,6 +216,8 @@ def _serialize(row: dict) -> dict:
         "warehouse": row.get("warehouse"),
         "role_name": row.get("role_name"),
         "refresh_interval": row.get("refresh_interval"),
+        # Durable in-use flag — not the client's "current environment" selection.
+        "is_active": bool(row.get("is_active", True)),
         "team_id": row.get("team_id"),
         "team_name": row.get("team_name"),
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
@@ -201,8 +225,17 @@ def _serialize(row: dict) -> dict:
 
 
 @router.get("/api/connections")
-def list_connections(user: dict = Depends(get_current_user)):
-    return [_serialize(c) for c in db.list_connections_for_user(user)]
+def list_connections(
+    active_only: bool = Query(
+        False,
+        description="If true, omit archived (is_active=false) connections.",
+    ),
+    user: dict = Depends(get_current_user),
+):
+    return [
+        _serialize(c)
+        for c in db.list_connections_for_user(user, active_only=active_only)
+    ]
 
 
 @router.post("/api/connections/test")
@@ -285,8 +318,17 @@ def connection_options(
 
 @router.post("/api/connections/{connection_id}/refresh")
 def refresh_connection_data(connection_id: int, user: dict = Depends(get_current_user)):
-    """Re-query Snowflake for every screen/tab dataset of this connection and store it."""
+    """Re-query Snowflake for every screen/tab dataset of this connection and store it.
+
+    Archived connections (``is_active=false``) are not refreshed — activate them first.
+    """
     creds = _access_creds(user, connection_id)
+    row = creds.get("row") or db.get_connection_by_id(connection_id)
+    if row is not None and not bool(row.get("is_active", True)):
+        raise HTTPException(
+            status_code=400,
+            detail="Conexão inativa. Ative-a antes de atualizar os dados.",
+        )
     results = cache.refresh_connection(connection_id, creds)
     warehouse_auto_saved = None
     for entry in results:
@@ -334,7 +376,7 @@ def discover_options(body: ConnectionDiscover, user: dict = Depends(get_current_
 
 @router.post("/api/connections")
 def create_connection(body: ConnectionCreate, user: dict = Depends(get_current_user)):
-    team_id = body.team_id or user.get("team_id")
+    team_id = _resolve_create_team_id(body, user)
     method = _normalize_method(body.auth_method)
     secret, origin = _require_secret(user, method, body)
     try:
@@ -437,6 +479,10 @@ def patch_connection(
             detail="Para revalidar Browser OAuth, use 'Reconectar via browser' (não PATCH com secret).",
         )
 
+    clear_team = body.clear_team or (
+        "team_id" in body.model_fields_set and body.team_id is None
+    )
+    update_team = clear_team or body.team_id is not None
     try:
         row = db.update_connection(
             connection_id,
@@ -452,6 +498,9 @@ def patch_connection(
             clear_refresh_interval=body.clear_refresh_interval,
             clear_warehouse=body.clear_warehouse,
             clear_role=body.clear_role,
+            team_id=None if clear_team else body.team_id,
+            clear_team=clear_team,
+            update_team=update_team,
             update_secret=bool(secret) and method in db.SECRET_METHODS,
             secret_source=origin,
         )
@@ -487,18 +536,40 @@ def delete_connection(connection_id: int, user: dict = Depends(get_current_user)
 
 @router.post("/api/connections/{connection_id}/activate")
 def activate_connection(connection_id: int, user: dict = Depends(get_current_user)):
+    """Mark connection as in use / available (durable). Does not select the environment."""
     if not db.user_can_access_connection(user, connection_id):
         raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
-    row = db.get_connection_by_id(connection_id)
-    if not row:
+    if not db.get_connection_by_id(connection_id):
         raise HTTPException(status_code=404, detail="Conexão não encontrada.")
-    return {"ok": True, "connection": _serialize(row)}
+    row = db.set_connection_active(connection_id, True)
+    return {
+        "ok": True,
+        "message": "Conexão ativada.",
+        "connection": _serialize(row),
+    }
+
+
+@router.post("/api/connections/{connection_id}/deactivate")
+def deactivate_connection(connection_id: int, user: dict = Depends(get_current_user)):
+    """Mark connection as archived / no longer used. Still listed and editable."""
+    if not db.user_can_access_connection(user, connection_id):
+        raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
+    if not db.get_connection_by_id(connection_id):
+        raise HTTPException(status_code=404, detail="Conexão não encontrada.")
+    row = db.set_connection_active(connection_id, False)
+    return {
+        "ok": True,
+        "message": "Conexão inativada.",
+        "connection": _serialize(row),
+    }
 
 
 @router.post("/api/connections/oauth/start")
 def oauth_start(body: OAuthStart, user: dict = Depends(get_current_user)):
     """Start Snowflake Local Application OAuth (browser login like Cortex)."""
-    team_id = body.team_id or user.get("team_id")
+    team_id = _resolve_create_team_id(body, user)
+    # Reconnect: only rewrite ACL when the client sent team_id (incl. null=Todos).
+    update_team = ("team_id" in body.model_fields_set) or (body.connection_id is None)
     if body.connection_id is not None:
         if not db.user_can_access_connection(user, body.connection_id):
             raise HTTPException(status_code=403, detail="Sem permissão para esta conexão.")
@@ -514,6 +585,7 @@ def oauth_start(body: OAuthStart, user: dict = Depends(get_current_user)):
             role_name=body.role_name,
             refresh_interval=body.refresh_interval,
             team_id=team_id,
+            update_team=update_team,
             connection_id=body.connection_id,
             return_to=body.return_to if body.return_to in OAUTH_RETURN_PATHS else None,
         )
@@ -612,7 +684,9 @@ def oauth_callback(
                 delay_ms=3500,
             )
 
+        # team_id may be null (Todos). update_team false on reconnect without team_id in body.
         team_id = pending.get("team_id")
+        update_team = bool(pending.get("update_team", True))
         existing_id = pending.get("connection_id")
         pending_interval = pending.get("refresh_interval")
         if existing_id:
@@ -629,6 +703,9 @@ def oauth_callback(
                 clear_refresh_interval="refresh_interval" in pending and pending_interval is None,
                 clear_warehouse=not pending.get("warehouse"),
                 clear_role=not pending.get("role_name"),
+                team_id=team_id,
+                clear_team=update_team and team_id is None,
+                update_team=update_team,
                 update_secret=True,
             )
             conn_id = int(existing_id)

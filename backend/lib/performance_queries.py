@@ -8,12 +8,6 @@ import pandas as pd
 
 from backend.lib.snowflake_client import friendly_connect_error, run_query_with_creds
 
-_LATENCY_NOTE = (
-    "Dados de ACCOUNT_USAGE podem atrasar (queries até ~45 min; "
-    "carga de warehouse até ~3 h). Recomendações são somente leitura — "
-    "o portal não altera warehouses no Snowflake."
-)
-
 _QUEUE_RATIO_HIGH = 0.15  # queued share of (running+queued) over the window
 _LOW_LOAD_MAX = 0.45  # mean (running+queued) per interval — candidate to downsize
 _SPILL_RATIO_HIGH = 5.0  # remote spill / bytes_scanned (Snowflake Resource Optimization guide)
@@ -124,7 +118,6 @@ def _privilege_payload(note: str, *, start: str, end: str, days: int) -> dict[st
         "days": days,
         "start_date": start,
         "end_date": end,
-        "latency_note": _LATENCY_NOTE,
         "note": note,
         "warehouses": [],
         "load_series": [],
@@ -361,7 +354,6 @@ def performance(
         "days": span,
         "start_date": start,
         "end_date": end,
-        "latency_note": _LATENCY_NOTE,
         "note": note,
         "warehouse_filter": (warehouse or "").strip() or None,
         "warehouse_options": warehouse_names,

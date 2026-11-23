@@ -20,7 +20,6 @@ export type PerformanceResp = {
   days: number;
   start_date?: string;
   end_date?: string;
-  latency_note?: string | null;
   note?: string | null;
   warehouse_filter?: string | null;
   warehouse_options?: string[];
@@ -77,7 +76,6 @@ export function PerformancePanel({
 
   return (
     <div className={`cost-tab-body perf-panel${loading ? " is-refreshing" : ""}`}>
-      {data.latency_note ? <div className="info-box">{data.latency_note}</div> : null}
       {data.note ? <div className="info-box">{data.note}</div> : null}
       {!data.available && !data.note ? (
         <div className="cost-empty-state" role="status">

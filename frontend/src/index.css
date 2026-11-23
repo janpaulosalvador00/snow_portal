@@ -3805,12 +3805,20 @@ body.modal-open {
 
 .perf-queries .table-head,
 .perf-queries .table-row {
-  /* minmax(0, …) keeps tracks stable so long SQL / WH names cannot blow the grid */
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 0.95fr) minmax(0, 0.45fr) minmax(0, 0.55fr) minmax(0, 0.85fr);
+  /* QUERY WH EXEC TEMPO DATA HORA SINAL — min widths enable horizontal scroll */
+  grid-template-columns:
+    minmax(12rem, 2.2fr)
+    minmax(6rem, 0.95fr)
+    minmax(3.25rem, 0.45fr)
+    minmax(3.5rem, 0.55fr)
+    minmax(5.25rem, 0.55fr)
+    minmax(3.5rem, 0.45fr)
+    minmax(4.5rem, 0.85fr);
   gap: 0.65rem;
   padding: 0.55rem 0.85rem;
   align-items: center;
   min-height: var(--perf-query-row-h, 3.6rem);
+  min-width: 44rem;
 }
 
 .perf-queries .table-head > *,
@@ -3852,6 +3860,11 @@ body.modal-open {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.perf-datetime {
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 .perf-signal-cell {
@@ -3943,6 +3956,7 @@ body.modal-open {
   --perf-query-row-h: 3.6rem;
   --perf-query-rows-visible: 6;
   max-height: calc(2.2rem + (var(--perf-query-rows-visible) * var(--perf-query-row-h)));
+  overflow-x: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border);

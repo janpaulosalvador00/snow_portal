@@ -113,6 +113,38 @@ def _fmt_duration_ms(ms: float) -> str:
     return f"{s}s"
 
 
+def _to_iso_utc(value: Any) -> str | None:
+    """Serialize Snowflake/pandas timestamp to ISO-8601 UTC string."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if hasattr(value, "to_pydatetime"):
+        try:
+            value = value.to_pydatetime()
+        except Exception:  # noqa: BLE001
+            pass
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.isoformat()
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:  # noqa: BLE001
+            return str(value)
+    return str(value)
+
+
 def _privilege_payload(note: str, *, start: str, end: str, days: int) -> dict[str, Any]:
     return {
         "available": False,
@@ -196,7 +228,8 @@ def performance(
           SUM(total_elapsed_time) AS total_elapsed_ms,
           SUM(COALESCE(bytes_scanned, 0)) AS bytes_scanned,
           SUM(COALESCE(bytes_spilled_to_remote_storage, 0)) AS bytes_spilled_remote,
-          SUM(COALESCE(bytes_spilled_to_local_storage, 0)) AS bytes_spilled_local
+          SUM(COALESCE(bytes_spilled_to_local_storage, 0)) AS bytes_spilled_local,
+          MAX(COALESCE(end_time, start_time)) AS last_end_time
         FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
         WHERE TO_DATE(CONVERT_TIMEZONE('UTC', start_time)) >= %s
           AND TO_DATE(CONVERT_TIMEZONE('UTC', start_time)) <= %s
@@ -330,6 +363,7 @@ def performance(
                     "executions": executions,
                     "total_elapsed_ms": total_ms,
                     "total_elapsed_label": _fmt_duration_ms(total_ms),
+                    "last_end_time": _to_iso_utc(row.get("last_end_time")),
                     "bytes_scanned": scanned,
                     "bytes_spilled_remote": spilled,
                     "spill_ratio": round(spill_ratio, 3) if spill_ratio < 900 else None,

@@ -191,7 +191,7 @@ export function AppShell() {
             <ChevronIcon collapsed={sidebarCollapsed} />
           </button>
         </div>
-        <div className="user-meta" title={sidebarCollapsed ? `Time: ${user?.team_name || "Suporte"}` : undefined}>
+        <div className="user-meta">
           <span className="user-meta-full">Time: {user?.team_name || "Suporte"}</span>
           <span className="user-meta-mark" aria-hidden="true">
             {(user?.team_name || "Suporte").slice(0, 1).toUpperCase()}

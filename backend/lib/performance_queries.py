@@ -11,7 +11,7 @@ from backend.lib.snowflake_client import friendly_connect_error, run_query_with_
 _QUEUE_RATIO_HIGH = 0.15  # queued share of (running+queued) over the window
 _LOW_LOAD_MAX = 0.45  # mean (running+queued) per interval — candidate to downsize
 _SPILL_RATIO_HIGH = 5.0  # remote spill / bytes_scanned (Snowflake Resource Optimization guide)
-_HOTSPOT_LIMIT = 40
+_HOTSPOT_LIMIT = 100
 
 
 def _window(

@@ -188,7 +188,7 @@ function RecommendationModal({
       >
         <div className="admin-modal-head">
           <div>
-            <h2 id={titleId}>Recomendação · {detail.warehouse}</h2>
+            <h2 id={titleId}>WAREHOUSE · {detail.warehouse}</h2>
             <p className="admin-modal-lead">Status: {levelLabel}</p>
           </div>
           <button type="button" className="btn admin-modal-close" onClick={onClose} aria-label="Fechar">

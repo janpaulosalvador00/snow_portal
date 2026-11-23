@@ -318,43 +318,43 @@
         <table>
           <thead>
             <tr>
-              <th>Padrão</th>
+              <th>Query</th>
               <th>Warehouse</th>
-              <th>Execuções</th>
-              <th>Tempo acum.</th>
-              <th>Recomendação</th>
+              <th>Exec.</th>
+              <th>Tempo</th>
+              <th>Sinal</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td>
-                <div>SELECT … JOIN fact_matricula</div>
-                <div class="mono" style="color:var(--muted)">hash a3f1… · user SVC_ETL</div>
+                <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">SELECT … JOIN fact_matricula</div>
+                <div class="mono" style="color:var(--muted)">SVC_ETL · a3f1c2d0…</div>
               </td>
-              <td>COMPUTE_WH</td>
-              <td>128</td>
-              <td>4h 12m</td>
-              <td><span class="badge warn">Priorizar otimização (muito repetida)</span></td>
+              <td title="COMPUTE_WH" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">COMPUTE_WH</td>
+              <td style="text-align:right">128</td>
+              <td style="text-align:right">4h 12m</td>
+              <td><span class="badge warn">Muito repetida</span></td>
             </tr>
             <tr>
               <td>
-                <div>CREATE TABLE AS … large_scan</div>
-                <div class="mono" style="color:var(--muted)">hash 91bc… · user ANALISTA</div>
+                <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">CREATE TABLE AS … large_scan</div>
+                <div class="mono" style="color:var(--muted)">ANALISTA · 91bc44aa…</div>
               </td>
-              <td>COMPUTE_WH</td>
-              <td>6</td>
-              <td>1h 40m</td>
-              <td><span class="badge bad">Spill remoto — considerar WH maior ou lotes menores</span></td>
+              <td title="COMPUTE_WH" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">COMPUTE_WH</td>
+              <td style="text-align:right">6</td>
+              <td style="text-align:right">1h 40m</td>
+              <td><span class="badge bad">Spill remoto</span></td>
             </tr>
             <tr>
               <td>
-                <div>CALL sp_refresh_dims()</div>
-                <div class="mono" style="color:var(--muted)">hash 44de… · user ADMIN</div>
+                <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">CALL sp_refresh_dims()</div>
+                <div class="mono" style="color:var(--muted)">ADMIN · 44de91f2…</div>
               </td>
-              <td>WH_TRANSFORM</td>
-              <td>14</td>
-              <td>52m</td>
-              <td><span class="badge neutral">Sem sinal de memória</span></td>
+              <td title="WH_TRANSFORM" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">WH_TRANSFORM</td>
+              <td style="text-align:right">14</td>
+              <td style="text-align:right">52m</td>
+              <td style="color:var(--muted)">—</td>
             </tr>
           </tbody>
         </table>

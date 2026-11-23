@@ -67,6 +67,34 @@ function badgeClass(level: string): string {
   return "perf-badge neutral";
 }
 
+/** Short actionable labels for query hotspot signals. */
+const QUERY_REC_SHORT: Record<string, string> = {
+  remote_spill: "Spill remoto",
+  repeated_heavy: "Muito repetida",
+  long_running: "Tempo alto",
+};
+
+/** Only warn/bad get a badge; neutral/ok/generic → em dash. */
+function querySignal(rec?: PerformanceRec | null): { level: string; text: string } | null {
+  if (!rec) return null;
+  const level = (rec.level || "").toLowerCase();
+  if (level !== "warn" && level !== "bad") return null;
+  const short = QUERY_REC_SHORT[rec.code] || rec.text?.trim();
+  if (!short) return null;
+  return { level, text: short };
+}
+
+function shortHash(key: string, n = 8): string {
+  if (!key) return "";
+  return key.length > n ? `${key.slice(0, n)}…` : key;
+}
+
+function queryMeta(userName: string, patternKey: string): string {
+  const user = (userName || "").trim() || "—";
+  const hash = shortHash(patternKey || "");
+  return hash ? `${user} · ${hash}` : user;
+}
+
 function shortDate(iso: string): string {
   // YYYY-MM-DD → MM/DD
   if (iso.length >= 10) return `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
@@ -241,32 +269,42 @@ export function PerformancePanel({
           <div className="perf-queries-scroll" role="region" aria-label="Top queries do período">
             <div className="table cost-table perf-table perf-queries">
               <div className="table-head">
-                <span>PADRÃO</span>
+                <span>QUERY</span>
                 <span>WAREHOUSE</span>
-                <span>EXEC.</span>
-                <span>TEMPO</span>
-                <span>RECOMENDAÇÃO</span>
+                <span className="perf-num">EXEC.</span>
+                <span className="perf-num">TEMPO</span>
+                <span>SINAL</span>
               </div>
-              {visibleQueries.map((q) => (
-                <div key={q.pattern_key || q.sample_query_id} className="table-row">
-                  <span>
-                    <div className="perf-preview">{q.query_preview || "—"}</div>
-                    <div className="muted mono perf-meta">
-                      {(q.pattern_key || "").slice(0, 12)}
-                      {q.pattern_key && q.pattern_key.length > 12 ? "…" : ""}
-                      {q.user_name ? ` · ${q.user_name}` : ""}
-                    </div>
-                  </span>
-                  <span>{q.warehouse_name || "—"}</span>
-                  <span>{q.executions}</span>
-                  <span>{q.total_elapsed_label}</span>
-                  <span>
-                    <span className={badgeClass(q.recommendation?.level)}>
-                      {q.recommendation?.text || "—"}
+              {visibleQueries.map((q) => {
+                const signal = querySignal(q.recommendation);
+                const warehouse = q.warehouse_name || "—";
+                return (
+                  <div key={q.pattern_key || q.sample_query_id} className="table-row">
+                    <span className="perf-query-cell">
+                      <div className="perf-preview" title={q.query_preview || undefined}>
+                        {q.query_preview || "—"}
+                      </div>
+                      <div className="muted mono perf-meta">
+                        {queryMeta(q.user_name, q.pattern_key)}
+                      </div>
                     </span>
-                  </span>
-                </div>
-              ))}
+                    <span className="perf-wh-cell" title={warehouse !== "—" ? warehouse : undefined}>
+                      {warehouse}
+                    </span>
+                    <span className="perf-num">{q.executions}</span>
+                    <span className="perf-num">{q.total_elapsed_label}</span>
+                    <span className="perf-signal-cell">
+                      {signal ? (
+                        <span className={badgeClass(signal.level)} title={q.recommendation?.text}>
+                          {signal.text}
+                        </span>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : (

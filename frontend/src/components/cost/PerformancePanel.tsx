@@ -302,10 +302,11 @@ function compareWarehouses(a: WarehouseRow, b: WarehouseRow, key: WhSortKey, dir
   }
 }
 
-/** "Top queries do período" sortable columns (TIPO stays unsorted). */
-type QuerySortKey = "query" | "warehouse" | "exec" | "tempo" | "datetime" | "sinal";
+/** "Top queries do período" sortable columns. */
+type QuerySortKey = "tipo" | "query" | "warehouse" | "exec" | "tempo" | "datetime" | "sinal";
 
 const QUERY_COLUMNS: { key: QuerySortKey; label: string; numeric?: boolean }[] = [
+  { key: "tipo", label: "TIPO" },
   { key: "query", label: "QUERY" },
   { key: "warehouse", label: "WAREHOUSE" },
   { key: "exec", label: "EXEC.", numeric: true },
@@ -322,6 +323,11 @@ function queryDefaultDir(key: QuerySortKey): SortDir {
 function compareQueries(a: QueryRow, b: QueryRow, key: QuerySortKey, dir: SortDir): number {
   const mul = dir;
   switch (key) {
+    case "tipo": {
+      const av = classifyQueryKind(a.query_type, a.query_preview);
+      const bv = classifyQueryKind(b.query_type, b.query_preview);
+      return mul * av.localeCompare(bv);
+    }
     case "query":
       return mul * (a.query_preview || "").localeCompare(b.query_preview || "");
     case "warehouse":
@@ -516,7 +522,6 @@ export function PerformancePanel({
           <div className="perf-queries-scroll" role="region" aria-label="Top queries do período">
             <div className="table cost-table perf-table perf-queries">
               <div className="table-head" role="row">
-                <span>TIPO</span>
                 {QUERY_COLUMNS.map((col) => {
                   const active = querySortKey === col.key;
                   return (

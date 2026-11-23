@@ -337,12 +337,6 @@ export function ConnectionsPage() {
           })}
         </div>
       )}
-      <p className="hint-note">
-        <strong>Intervalo por conexão:</strong> badge no card mostra o valor próprio (ex.{" "}
-        <em>15 min</em>), <em>Global</em> (segue o controle acima) ou <em>Desligada</em> (sem
-        auto-refresh nesta conexão). Com Global em <em>Desligada</em>, conexões no modo Global
-        também ficam pausadas. Contas <em>Inativas</em> não entram no auto-refresh.
-      </p>
 
       {creating ? (
         <ConnectionCreateModal

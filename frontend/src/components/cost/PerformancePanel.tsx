@@ -52,13 +52,13 @@ export type PerformanceResp = {
     days_with_queue: number;
     recommendation: PerformanceRec;
   }[];
-  load_series: { date: string; avg_running: number; avg_queued_load: number }[];
-  /** Per warehouse × day load — used to filter Diagnóstico when a chart day is selected. */
+  load_series: { date: string; running_count: number; queued_count: number }[];
+  /** Per warehouse × day query counts — used to filter Diagnóstico when a chart day is selected. */
   warehouse_daily?: {
     date: string;
     warehouse_name: string;
-    avg_running: number;
-    avg_queued_load: number;
+    running_count: number;
+    queued_count: number;
   }[];
   queries: {
     pattern_key: string;
@@ -235,17 +235,10 @@ function shortDate(iso: string): string {
   return iso;
 }
 
-/**
- * Format WAREHOUSE_LOAD_HISTORY averages (concurrent query load).
- * Not total query counts — fractional values are expected when load is low.
- */
-function formatLoad(n: number): string {
+/** Format daily Running/Queued query counts as integers. */
+function formatCount(n: number): string {
   if (!Number.isFinite(n)) return "—";
-  if (n === 0) return "0";
-  const abs = Math.abs(n);
-  if (abs >= 10) return n.toFixed(1);
-  if (abs >= 1) return n.toFixed(2);
-  return n.toFixed(3);
+  return String(Math.round(n));
 }
 
 type LoadChartRow = {
@@ -271,14 +264,14 @@ function LoadDayTooltip({
       <div className="perf-load-tooltip-row">
         <span className="perf-load-swatch" style={{ background: "#29B5E8" }} />
         <span>Running</span>
-        <strong>{formatLoad(row.running)}</strong>
+        <strong>{formatCount(row.running)}</strong>
       </div>
       <div className="perf-load-tooltip-row">
         <span className="perf-load-swatch" style={{ background: "#f5a524" }} />
         <span>Queued</span>
-        <strong>{formatLoad(row.queued)}</strong>
+        <strong>{formatCount(row.queued)}</strong>
       </div>
-      <p className="perf-load-tooltip-note">Média de queries concorrentes no dia</p>
+      <p className="perf-load-tooltip-note">Quantidade de queries no dia</p>
     </div>
   );
 }
@@ -305,9 +298,9 @@ function LoadStackLabel(props: {
       className="perf-load-bar-label"
       fontSize={10}
     >
-      <tspan fill="#9adcf5">{formatLoad(row.running)}</tspan>
+      <tspan fill="#9adcf5">{formatCount(row.running)}</tspan>
       <tspan fill="#8B939E"> / </tspan>
-      <tspan fill="#ffc15a">{formatLoad(row.queued)}</tspan>
+      <tspan fill="#ffc15a">{formatCount(row.queued)}</tspan>
     </text>
   );
 }
@@ -347,11 +340,13 @@ type QueryRow = PerformanceResp["queries"][number];
 type WarehouseDailyRow = NonNullable<PerformanceResp["warehouse_daily"]>[number];
 
 const QUEUE_RATIO_HIGH = 0.15;
-const LOW_LOAD_MAX = 0.45;
+const LOW_LOAD_MAX = 20;
+const QUEUE_COUNT_HIGH = 10;
+const QUEUE_COUNT_MED = 1;
 
 function queueLabel(meanQueued: number, queueShare: number): string {
-  if (meanQueued >= 0.1 || queueShare >= QUEUE_RATIO_HIGH) return "alta";
-  if (meanQueued >= 0.02 || queueShare >= 0.05) return "média";
+  if (meanQueued >= QUEUE_COUNT_HIGH || queueShare >= QUEUE_RATIO_HIGH) return "alta";
+  if (meanQueued >= QUEUE_COUNT_MED || queueShare >= 0.05) return "média";
   return "baixa";
 }
 
@@ -363,14 +358,17 @@ function recommendWarehouse(
 ): PerformanceRec {
   const total = meanRunning + meanQueued;
   const queueShare = total > 1e-9 ? meanQueued / total : 0;
-  if (meanQueued > 0.05 && (queueShare >= QUEUE_RATIO_HIGH || daysWithQueue >= Math.max(2, Math.floor(days / 3)))) {
+  if (
+    meanQueued >= QUEUE_COUNT_MED &&
+    (queueShare >= QUEUE_RATIO_HIGH || daysWithQueue >= Math.max(2, Math.floor(days / 3)))
+  ) {
     return {
       level: "warn",
       code: "upsize_or_multicluster",
       text: "Fila recorrente — considerar aumentar o tamanho ou multi-cluster / separar workload",
     };
   }
-  if (total > 0 && total < LOW_LOAD_MAX && meanQueued < 0.02 && daysWithQueue <= 1) {
+  if (total > 0 && total < LOW_LOAD_MAX && meanQueued < QUEUE_COUNT_MED && daysWithQueue <= 1) {
     return {
       level: "ok",
       code: "downsize_candidate",
@@ -389,11 +387,11 @@ function warehousesForDay(
   const rows: WarehouseRow[] = [];
   for (const r of daily) {
     if (r.date !== day) continue;
-    const meanRunning = r.avg_running ?? 0;
-    const meanQueued = r.avg_queued_load ?? 0;
+    const meanRunning = r.running_count ?? 0;
+    const meanQueued = r.queued_count ?? 0;
     const total = meanRunning + meanQueued;
     const share = total > 1e-9 ? meanQueued / total : 0;
-    const daysWithQueue = meanQueued > 0.02 ? 1 : 0;
+    const daysWithQueue = meanQueued > 0 ? 1 : 0;
     rows.push({
       warehouse_name: r.warehouse_name,
       size: sizeByName.get(r.warehouse_name.toUpperCase()) ?? null,
@@ -589,8 +587,8 @@ export function PerformancePanel({
       (data.load_series ?? []).map((r) => ({
         dateIso: r.date,
         date: shortDate(r.date),
-        running: Number(r.avg_running) || 0,
-        queued: Number(r.avg_queued_load) || 0,
+        running: Number(r.running_count) || 0,
+        queued: Number(r.queued_count) || 0,
       })),
     [data.load_series],
   );
@@ -670,7 +668,7 @@ export function PerformancePanel({
             <div>
               <h4>Carga e fila (por dia)</h4>
               <p className="muted perf-card-desc">
-                Números = média de queries concorrentes (Running em execução · Queued na fila por
+                Números = quantidade de queries (Running sem fila de sobrecarga · Queued na fila por
                 sobrecarga) · rótulo Running / Queued · clique no dia para filtrar
               </p>
             </div>
@@ -699,7 +697,8 @@ export function PerformancePanel({
                   <YAxis
                     stroke="#8B939E"
                     tick={{ fontSize: 11 }}
-                    tickFormatter={(v) => formatLoad(Number(v))}
+                    tickFormatter={(v) => formatCount(Number(v))}
+                    allowDecimals={false}
                   />
                   <Tooltip content={<LoadDayTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
                   <Legend />

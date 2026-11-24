@@ -8,8 +8,10 @@ import pandas as pd
 
 from backend.lib.snowflake_client import friendly_connect_error, run_query_with_creds
 
-_QUEUE_RATIO_HIGH = 0.15  # queued share of (running+queued) over the window
-_LOW_LOAD_MAX = 0.45  # mean (running+queued) per interval — candidate to downsize
+_QUEUE_RATIO_HIGH = 0.15  # queued share of (running+queued) query counts
+_LOW_LOAD_MAX = 20.0  # mean queries/day — candidate to downsize
+_QUEUE_COUNT_HIGH = 10.0  # mean queued queries/day → fila "alta"
+_QUEUE_COUNT_MED = 1.0  # mean queued queries/day → fila "média"
 _SPILL_RATIO_HIGH = 5.0  # remote spill / bytes_scanned (Snowflake Resource Optimization guide)
 _HOTSPOT_LIMIT = 100
 
@@ -38,15 +40,18 @@ def _wh_clause(warehouse: str | None) -> tuple[str, tuple]:
 
 
 def _recommend_warehouse(*, mean_running: float, mean_queued: float, days_with_queue: int, days: int) -> dict[str, str]:
+    """mean_* are mean daily query counts (Running without overload queue + Queued)."""
     total = mean_running + mean_queued
     queue_share = (mean_queued / total) if total > 1e-9 else 0.0
-    if mean_queued > 0.05 and (queue_share >= _QUEUE_RATIO_HIGH or days_with_queue >= max(2, days // 3)):
+    if mean_queued >= _QUEUE_COUNT_MED and (
+        queue_share >= _QUEUE_RATIO_HIGH or days_with_queue >= max(2, days // 3)
+    ):
         return {
             "level": "warn",
             "code": "upsize_or_multicluster",
             "text": "Fila recorrente — considerar aumentar o tamanho ou multi-cluster / separar workload",
         }
-    if total > 0 and total < _LOW_LOAD_MAX and mean_queued < 0.02 and days_with_queue <= 1:
+    if total > 0 and total < _LOW_LOAD_MAX and mean_queued < _QUEUE_COUNT_MED and days_with_queue <= 1:
         return {
             "level": "ok",
             "code": "downsize_candidate",
@@ -87,9 +92,9 @@ def _recommend_query(*, executions: int, spill_ratio: float, total_elapsed_ms: f
 
 
 def _queue_label(mean_queued: float, queue_share: float) -> str:
-    if mean_queued >= 0.1 or queue_share >= _QUEUE_RATIO_HIGH:
+    if mean_queued >= _QUEUE_COUNT_HIGH or queue_share >= _QUEUE_RATIO_HIGH:
         return "alta"
-    if mean_queued >= 0.02 or queue_share >= 0.05:
+    if mean_queued >= _QUEUE_COUNT_MED or queue_share >= 0.05:
         return "média"
     return "baixa"
 
@@ -188,16 +193,21 @@ def performance(
     except Exception:  # noqa: BLE001
         pass
 
-    # --- Load history ---
+    # --- Daily Running / Queued query counts (not concurrent-load averages) ---
+    # Running = queries that never waited on overload queue.
+    # Queued  = queries with queued_overload_time > 0 (fila por sobrecarga).
+    # Partition is disjoint so stacked bars = total warehouse queries that day.
     load_sql = f"""
         SELECT
           TO_DATE(CONVERT_TIMEZONE('UTC', start_time)) AS usage_date,
           warehouse_name,
-          AVG(avg_running) AS avg_running,
-          AVG(avg_queued_load) AS avg_queued_load
-        FROM SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_LOAD_HISTORY
+          COUNT_IF(COALESCE(queued_overload_time, 0) = 0) AS running_count,
+          COUNT_IF(COALESCE(queued_overload_time, 0) > 0) AS queued_count
+        FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
         WHERE TO_DATE(CONVERT_TIMEZONE('UTC', start_time)) >= %s
           AND TO_DATE(CONVERT_TIMEZONE('UTC', start_time)) <= %s
+          AND warehouse_name IS NOT NULL
+          AND total_elapsed_time > 0
           {wh_sql}
         GROUP BY 1, 2
         ORDER BY 1, 2
@@ -301,7 +311,7 @@ def performance(
     if not load_df.empty:
         daily = (
             load_df.groupby("usage_date", dropna=False)
-            .agg(avg_running=("avg_running", "sum"), avg_queued_load=("avg_queued_load", "sum"))
+            .agg(running_count=("running_count", "sum"), queued_count=("queued_count", "sum"))
             .reset_index()
             .sort_values("usage_date")
         )
@@ -311,8 +321,8 @@ def performance(
             load_series.append(
                 {
                     "date": date_str,
-                    "avg_running": round(float(row["avg_running"] or 0), 4),
-                    "avg_queued_load": round(float(row["avg_queued_load"] or 0), 4),
+                    "running_count": int(row["running_count"] or 0),
+                    "queued_count": int(row["queued_count"] or 0),
                 }
             )
         for _, row in load_df.iterrows():
@@ -325,8 +335,8 @@ def performance(
                 {
                     "date": date_str,
                     "warehouse_name": name,
-                    "avg_running": round(float(row.get("avg_running") or 0), 4),
-                    "avg_queued_load": round(float(row.get("avg_queued_load") or 0), 4),
+                    "running_count": int(row.get("running_count") or 0),
+                    "queued_count": int(row.get("queued_count") or 0),
                 }
             )
 
@@ -336,11 +346,11 @@ def performance(
             name = str(wh_name or "").strip()
             if not name:
                 continue
-            mean_running = float(grp["avg_running"].astype(float).mean())
-            mean_queued = float(grp["avg_queued_load"].astype(float).mean())
+            mean_running = float(grp["running_count"].astype(float).mean())
+            mean_queued = float(grp["queued_count"].astype(float).mean())
             total = mean_running + mean_queued
             queue_share = (mean_queued / total) if total > 1e-9 else 0.0
-            days_with_queue = int((grp["avg_queued_load"].astype(float) > 0.02).sum())
+            days_with_queue = int((grp["queued_count"].astype(float) > 0).sum())
             rec = _recommend_warehouse(
                 mean_running=mean_running,
                 mean_queued=mean_queued,
@@ -351,8 +361,8 @@ def performance(
                 {
                     "warehouse_name": name,
                     "size": size_by_wh.get(name.upper()) or None,
-                    "mean_running": round(mean_running, 4),
-                    "mean_queued": round(mean_queued, 4),
+                    "mean_running": round(mean_running, 2),
+                    "mean_queued": round(mean_queued, 2),
                     "queue_label": _queue_label(mean_queued, queue_share),
                     "days_with_queue": days_with_queue,
                     "recommendation": rec,

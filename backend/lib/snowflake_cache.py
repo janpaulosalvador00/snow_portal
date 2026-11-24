@@ -82,8 +82,8 @@ def performance_params(
     return {
         **window_params(days, start_date, end_date),
         "warehouse": None if not wh or wh.upper() == "ALL" else wh,
-        # Bump when performance query payload shape changes (e.g. warehouse_daily).
-        "_schema": 3,
+        # Bump when performance query payload shape changes (e.g. load counts).
+        "_schema": 4,
     }
 
 

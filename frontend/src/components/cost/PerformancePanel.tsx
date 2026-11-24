@@ -563,6 +563,12 @@ export function PerformancePanel({
     [data.load_series],
   );
 
+  // Stacked bars: Y max = max(running + queued) per day, then +10% headroom so bars don't hit the plot top.
+  const loadChartYMax = useMemo(() => {
+    const stackMax = chartRows.reduce((m, r) => Math.max(m, r.running + r.queued), 0);
+    return stackMax > 0 ? stackMax * 1.1 : 1;
+  }, [chartRows]);
+
   function toggleDay(dayIso: string) {
     onSelectedDay(selectedDay === dayIso ? null : dayIso);
   }
@@ -665,9 +671,10 @@ export function PerformancePanel({
                     tick={{ fontSize: 11 }}
                     tickFormatter={(v) => formatCount(Number(v))}
                     allowDecimals={false}
+                    domain={[0, loadChartYMax]}
                   />
                   <Tooltip content={<LoadDayTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                  <Legend />
+                  <Legend iconSize={9} wrapperStyle={{ fontSize: 11 }} />
                   <Bar
                     dataKey="running"
                     name="Running"

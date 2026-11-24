@@ -3677,6 +3677,15 @@ body.modal-open {
   height: 100% !important;
 }
 
+.perf-grid > .perf-card .perf-load-chart .recharts-legend-wrapper {
+  font-size: 11px;
+}
+
+.perf-grid > .perf-card .perf-load-chart .recharts-legend-item-text {
+  font-size: 11px !important;
+  color: #8b939e;
+}
+
 .perf-card {
   background: #161a20;
   border: 1px solid var(--border);

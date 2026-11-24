@@ -879,11 +879,6 @@ export function CostManagementPage() {
         <CostTabs tab={activeTab} onTab={setTab} />
       </div>
 
-      <p className="cost-latency muted">
-        Dados de ACCOUNT_USAGE / ORGANIZATION_USAGE podem ter atraso. Sem conta ativa, ative em{" "}
-        <Link to="/conexoes">Conexões</Link>.
-      </p>
-
       {noActive ? (
         <div className="warn-box">
           Nenhuma conta ativa. Vá em <Link to="/conexoes">Conexões</Link>, ative uma conta e, se

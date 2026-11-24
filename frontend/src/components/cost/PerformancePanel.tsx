@@ -667,10 +667,6 @@ export function PerformancePanel({
           <div className="perf-card-head">
             <div>
               <h4>Carga e fila (por dia)</h4>
-              <p className="muted perf-card-desc">
-                Números = quantidade de queries (Running sem fila de sobrecarga · Queued na fila por
-                sobrecarga) · rótulo Running / Queued · clique no dia para filtrar
-              </p>
             </div>
             {selectedDay ? (
               <button

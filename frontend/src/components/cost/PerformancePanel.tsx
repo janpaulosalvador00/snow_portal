@@ -270,7 +270,7 @@ function LoadDayTooltip({
         <span>Queued</span>
         <strong>{formatCount(row.queued)}</strong>
       </div>
-      <p className="perf-load-tooltip-note">Quantidade de queries no dia</p>
+      <p className="perf-load-tooltip-note">Quantidade no dia</p>
     </div>
   );
 }

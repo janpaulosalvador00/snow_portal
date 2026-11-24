@@ -4,6 +4,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -232,6 +233,83 @@ function queryMeta(userName: string, patternKey: string): string {
 function shortDate(iso: string): string {
   if (iso.length >= 10) return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
   return iso;
+}
+
+/**
+ * Format WAREHOUSE_LOAD_HISTORY averages (concurrent query load).
+ * Not total query counts — fractional values are expected when load is low.
+ */
+function formatLoad(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  if (n === 0) return "0";
+  const abs = Math.abs(n);
+  if (abs >= 10) return n.toFixed(1);
+  if (abs >= 1) return n.toFixed(2);
+  return n.toFixed(3);
+}
+
+type LoadChartRow = {
+  dateIso: string;
+  date: string;
+  running: number;
+  queued: number;
+};
+
+function LoadDayTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<{ payload?: LoadChartRow }>;
+}) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  return (
+    <div className="perf-load-tooltip">
+      <div className="perf-load-tooltip-date">{row.date}</div>
+      <div className="perf-load-tooltip-row">
+        <span className="perf-load-swatch" style={{ background: "#29B5E8" }} />
+        <span>Running</span>
+        <strong>{formatLoad(row.running)}</strong>
+      </div>
+      <div className="perf-load-tooltip-row">
+        <span className="perf-load-swatch" style={{ background: "#f5a524" }} />
+        <span>Queued</span>
+        <strong>{formatLoad(row.queued)}</strong>
+      </div>
+      <p className="perf-load-tooltip-note">Média de queries concorrentes no dia</p>
+    </div>
+  );
+}
+
+/** Combined Running / Queued label above each stacked bar. */
+function LoadStackLabel(props: {
+  x?: number | string;
+  y?: number | string;
+  width?: number | string;
+  index?: number;
+  chartRows: LoadChartRow[];
+}) {
+  const { x = 0, y = 0, width = 0, index = 0, chartRows } = props;
+  const row = chartRows[index];
+  if (!row) return null;
+  const cx = Number(x) + Number(width) / 2;
+  const cy = Number(y) - 6;
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+  return (
+    <text
+      x={cx}
+      y={cy}
+      textAnchor="middle"
+      className="perf-load-bar-label"
+      fontSize={10}
+    >
+      <tspan fill="#9adcf5">{formatLoad(row.running)}</tspan>
+      <tspan fill="#8B939E"> / </tspan>
+      <tspan fill="#ffc15a">{formatLoad(row.queued)}</tspan>
+    </text>
+  );
 }
 
 /** UTC calendar day (YYYY-MM-DD) from an ISO timestamp or date-only string. */
@@ -506,13 +584,13 @@ export function PerformancePanel({
     }
   }, [data.start_date, data.end_date, data.load_series, selectedDay, onSelectedDay]);
 
-  const chartRows = useMemo(
+  const chartRows = useMemo<LoadChartRow[]>(
     () =>
       (data.load_series ?? []).map((r) => ({
         dateIso: r.date,
         date: shortDate(r.date),
-        running: r.avg_running,
-        queued: r.avg_queued_load,
+        running: Number(r.avg_running) || 0,
+        queued: Number(r.avg_queued_load) || 0,
       })),
     [data.load_series],
   );
@@ -592,8 +670,8 @@ export function PerformancePanel({
             <div>
               <h4>Carga e fila (por dia)</h4>
               <p className="muted perf-card-desc">
-                Running = queries em execução · Queued = fila por sobrecarga · clique no dia para
-                filtrar
+                Números = média de queries concorrentes (Running em execução · Queued na fila por
+                sobrecarga) · rótulo Running / Queued · clique no dia para filtrar
               </p>
             </div>
             {selectedDay ? (
@@ -611,20 +689,19 @@ export function PerformancePanel({
           {chartRows.length ? (
             <div className="chart-wrap cost-chart perf-load-chart">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartRows} style={{ cursor: "pointer" }}>
+                <BarChart
+                  data={chartRows}
+                  style={{ cursor: "pointer" }}
+                  margin={{ top: 22, right: 8, left: 0, bottom: 0 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" vertical={false} />
                   <XAxis dataKey="date" stroke="#8B939E" tick={{ fontSize: 11 }} />
-                  <YAxis stroke="#8B939E" tick={{ fontSize: 11 }} />
-                  <Tooltip
-                    contentStyle={{
-                      background: "#1A1D21",
-                      border: "1px solid #2A2F36",
-                    }}
-                    labelFormatter={(_, payload) => {
-                      const iso = (payload?.[0]?.payload as { dateIso?: string } | undefined)?.dateIso;
-                      return iso ? shortDate(iso) : "";
-                    }}
+                  <YAxis
+                    stroke="#8B939E"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v) => formatLoad(Number(v))}
                   />
+                  <Tooltip content={<LoadDayTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
                   <Legend />
                   <Bar
                     dataKey="running"
@@ -675,6 +752,12 @@ export function PerformancePanel({
                         />
                       );
                     })}
+                    <LabelList
+                      dataKey="queued"
+                      content={(props) => (
+                        <LoadStackLabel {...props} chartRows={chartRows} />
+                      )}
+                    />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>

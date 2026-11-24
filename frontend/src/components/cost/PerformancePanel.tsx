@@ -4,7 +4,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  LabelList,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -273,35 +272,6 @@ function LoadDayTooltip({
       </div>
       <p className="perf-load-tooltip-note">Quantidade de queries no dia</p>
     </div>
-  );
-}
-
-/** Combined Running / Queued label above each stacked bar. */
-function LoadStackLabel(props: {
-  x?: number | string;
-  y?: number | string;
-  width?: number | string;
-  index?: number;
-  chartRows: LoadChartRow[];
-}) {
-  const { x = 0, y = 0, width = 0, index = 0, chartRows } = props;
-  const row = chartRows[index];
-  if (!row) return null;
-  const cx = Number(x) + Number(width) / 2;
-  const cy = Number(y) - 6;
-  if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
-  return (
-    <text
-      x={cx}
-      y={cy}
-      textAnchor="middle"
-      className="perf-load-bar-label"
-      fontSize={10}
-    >
-      <tspan fill="#9adcf5">{formatCount(row.running)}</tspan>
-      <tspan fill="#8B939E"> / </tspan>
-      <tspan fill="#ffc15a">{formatCount(row.queued)}</tspan>
-    </text>
   );
 }
 
@@ -686,7 +656,7 @@ export function PerformancePanel({
                 <BarChart
                   data={chartRows}
                   style={{ cursor: "pointer" }}
-                  margin={{ top: 22, right: 8, left: 0, bottom: 0 }}
+                  margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#2A2F36" vertical={false} />
                   <XAxis dataKey="date" stroke="#8B939E" tick={{ fontSize: 11 }} />
@@ -747,12 +717,6 @@ export function PerformancePanel({
                         />
                       );
                     })}
-                    <LabelList
-                      dataKey="queued"
-                      content={(props) => (
-                        <LoadStackLabel {...props} chartRows={chartRows} />
-                      )}
-                    />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>

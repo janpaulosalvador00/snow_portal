@@ -3670,11 +3670,6 @@ body.modal-open {
   line-height: 1.3;
 }
 
-.perf-load-bar-label {
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-
 .perf-grid > .perf-card .perf-load-chart > .recharts-responsive-container {
   position: absolute !important;
   inset: 0;

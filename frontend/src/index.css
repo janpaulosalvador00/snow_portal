@@ -1092,11 +1092,6 @@ select:focus {
   color: var(--text);
 }
 
-.cost-latency {
-  margin: 0.35rem 0 0.85rem;
-  font-size: 0.82rem;
-}
-
 .cost-filters {
   display: flex;
   flex-wrap: wrap;
